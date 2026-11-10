@@ -55,18 +55,21 @@ index a82bcc9..0acfce4 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index 4706561..f864f10 100644
+index 4706561..207106d 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
-@@ -59,6 +59,7 @@
+@@ -57,8 +57,10 @@
+ #include "render_options.h"
+ #include "training_overlay.h"
  #include "ghost_ai.h"
++#include "ai_takeover.h"
  #include "practice_cpu.h"
  #include "lcancel.h"
 +#include "pad_mods.h"
  #include "offline_input_delay.h"
  #include "disc_archive.h"
  #include "user_gecko.h"
-@@ -1322,9 +1323,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1322,9 +1324,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
    {
      char dll_path[MAX_PATH] = {};
      HMODULE module = GetModuleHandleA(g_dll.c_str());
@@ -97,7 +100,7 @@ index 4706561..f864f10 100644
        std::ifstream in(path);
        // The offsets are right only for the library they were read from: a file from another build
        // (a library copied without it) left the wrong memory out and restored the sound driver's on
-@@ -1341,7 +1361,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1341,7 +1362,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          if (std::sscanf(line.c_str(), "# dll_size %llu", &value) == 1) { other_build = value != dll_size; continue; }
          unsigned long long offset = 0, size = 0;
          if (std::sscanf(line.c_str(), "%llx %llx", &offset, &size) == 2 && size) {
@@ -106,7 +109,7 @@ index 4706561..f864f10 100644
            bytes += size;
          }
        }
-@@ -1351,7 +1371,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1351,7 +1372,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          host::log("online: WARNING: %s missing; sound driver state is inside snapshots", path.c_str());
        else {
          exclusions.insert(exclusions.end(), sound.begin(), sound.end());
@@ -116,7 +119,7 @@ index 4706561..f864f10 100644
        }
      }
    }
-@@ -2222,6 +2243,49 @@ void ranked_harness_tick() {
+@@ -2222,6 +2244,49 @@ void ranked_harness_tick() {
    host::log("online test: ranked, back to the match scene for the next game (from major %d state %d)", scene[0], scene[1]);
  }
  
@@ -166,7 +169,7 @@ index 4706561..f864f10 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2249,6 +2313,8 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2249,6 +2314,8 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
@@ -175,7 +178,15 @@ index 4706561..f864f10 100644
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -4129,7 +4195,7 @@ int run(void (*shutdown)(int)) {
+@@ -3274,6 +3341,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+ }
+ 
+ void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
++  ai_takeover::note_event(command, payload, size);   // Vooby Mods' AI takeover reads the post-frames
+ #ifdef YOUGAME_AGENT_TEST_HOOK
+   if (command == 0x36)
+     g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
+@@ -4129,7 +4197,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -216,18 +227,70 @@ index 8b1b559..18c87d5 100644
  
  #endif
 diff --git a/port/runtime/gx/pc_settings.cpp b/port/runtime/gx/pc_settings.cpp
-index 871cf2c..07fc296 100644
+index 871cf2c..f769731 100644
 --- a/port/runtime/gx/pc_settings.cpp
 +++ b/port/runtime/gx/pc_settings.cpp
-@@ -52,6 +52,7 @@
+@@ -52,6 +52,10 @@
  #include "input_bindings.h"
  #include "settings_nav.h"
  #include "lcancel.h"
 +#include "pad_mods.h"
++#include "practice_ghosts.h"   // Vooby Mods window: the pro AIs per character (vooby_ui.inl)
++#include "ghost_ai.h"
++#include "../abi/mu_practice_cpu.h"
  #include "../abi/mu_lcancel_flash.h"
  #include "user_gecko.h"
  
-@@ -733,7 +734,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
+@@ -455,6 +459,48 @@ static void draw_community_code_overlays() {
+   draw->PopClipRect();
+ }
+ 
++// Vooby Mods' AI takeover: an "AI" badge over each fighter an AI plays for (D-pad down), where the
++// ally markers put YOU; drawn whatever the HUD options are.
++static void draw_ai_takeover_labels() {
++  if (!g_hud_match) return;
++  bool any = false;
++  for (int p = 0; p < 4; ++p) any |= pad_mods::ai_active(p);
++  if (!any) return;
++  const OverlayBounds bounds = overlay_bounds();
++  const float width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
++  ImDrawList* draw = ImGui::GetForegroundDrawList();
++  draw->PushClipRect(ImVec2(bounds.left, bounds.top), ImVec2(bounds.right, bounds.bottom), true);
++  const float px = std::clamp(height / 28.0f, 13.0f, 32.0f);
++  const float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 4.0f);
++  if (std::getenv("MU_AI_LABEL_LOG") && (ImGui::GetFrameCount() % 120) == 0)   // test hook
++    for (int slot = 0; slot < 2; ++slot)
++      host::log("ai label: slot %d present %d tag %.1f,%.1f visible %d", slot, (int)g_hud_players[slot].present,
++                g_hud_players[slot].tag_x, g_hud_players[slot].tag_y, (int)g_hud_players[slot].tag_visible);
++  for (int slot = 0; slot < 4; ++slot) {
++    const HudPlayerSnapshot& p = g_hud_players[slot];
++    if (!pad_mods::ai_active(slot) || !p.present) continue;
++    if (!std::isfinite(p.tag_x) || !std::isfinite(p.tag_y) || p.tag_y <= 0.0f) continue;
++    const float x640 = true_widescreen_active() ? 320.0f + (p.tag_x - 320.0f) * true_widescreen_factor() : p.tag_x;
++    const float cx = bounds.left + x640 / 640.0f * width;
++    const float base = bounds.top + p.tag_y / 480.0f * height - px * 1.2f;   // the pointer's tip
++    const char* label = "AI";
++    const float tw = practice_menu::text_width(px, label);
++    const float bw = tw + px * 0.9f, bh = px * 1.25f;
++    const ImVec2 a(cx - bw * 0.5f, base - px * 0.45f - bh), b(cx + bw * 0.5f, base - px * 0.45f);
++    // glow, pill (pink to violet), outline, pointer
++    draw->AddRectFilled(ImVec2(a.x - 4, a.y - 4), ImVec2(b.x + 4, b.y + 4), IM_COL32(236, 72, 153, (int)(40 + 50 * pulse)), bh);
++    const int v0 = draw->VtxBuffer.Size;
++    draw->AddRectFilled(a, b, IM_COL32_WHITE, bh * 0.5f);
++    ImGui::ShadeVertsLinearColorGradientKeepAlpha(draw, v0, draw->VtxBuffer.Size, a, ImVec2(b.x, a.y),
++                                                  IM_COL32(236, 72, 153, 245), IM_COL32(139, 92, 246, 245));
++    draw->AddRect(a, b, IM_COL32(255, 255, 255, 200), bh * 0.5f, 0, 1.5f);
++    draw->AddTriangleFilled(ImVec2(cx - px * 0.35f, b.y - 1), ImVec2(cx + px * 0.35f, b.y - 1), ImVec2(cx, base),
++                            IM_COL32(190, 80, 200, 245));
++    practice_menu::text(draw, cx - tw * 0.5f, a.y + (bh - px) * 0.5f, px, IM_COL32(255, 255, 255, 255), label, 0.0f, true);
++  }
++  draw->PopClipRect();
++}
++
+ static void draw_player_nicknames() {
+   if (!g_hud_match) return;
+   const OverlayBounds bounds = overlay_bounds();
+@@ -733,7 +779,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
  // while the settings panel is open, which is when the overlay may be dragged and resized.
  static void draw_input_overlay(int port, int row, bool lone, bool editable, bool borderless, bool values, int knob) {
    host::PadState pads[4]{};
@@ -236,11 +299,15 @@ index 871cf2c..07fc296 100644
    int slot = port < 0 || port > 3 ? 0 : port;
    // An adapter socket the player is not using reports nothing, and the overlay then drew an empty
    // controller with no hint why. With a single port selected, show the first one that has a device
-@@ -2371,6 +2372,17 @@ void load_pc_settings(RenderOptions& options, int& volume) {
+@@ -2371,6 +2417,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
        else if (key == "lcancel_flash_mode") saved_lcancel_flash = std::clamp(std::stoi(value), 0, 6);
        else if (key == "lcancel_success_flash") saved_lcancel_success = std::clamp(std::stoi(value), 0, 2);
        else if (key == "autolcancel") lcancel::set_automatic(value == "1");
 +      else if (key == "padmod_all") pad_mods::set_all_enabled(value != "0");
++      else if (key.rfind("padmod_aipick_", 0) == 0) {   // AI takeover: the AI picked per character kind
++        const int kind = std::atoi(key.c_str() + 14);
++        pad_mods::set_ai_choice(kind, std::atoi(value.c_str()));
++      }
 +      else if (key.rfind("padmod_", 0) == 0) {
 +        for (int m = 0; m < pad_mods::kCount; ++m) {
 +          const std::string base = pad_mods::info(m).ini_key;
@@ -254,7 +321,7 @@ index 871cf2c..07fc296 100644
        else if (key == "palstockicons") gecko::option_pal_stock_icons = value == "1";
        else if (key == "noscreenshake") gecko::option_no_screen_shake = value == "1";
        else if (key == "screenshake") gecko::option_screen_shake_percent = std::clamp(std::stoi(value), 0, 200);
-@@ -2775,6 +2787,7 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
+@@ -2775,6 +2836,7 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
  
  #include "ui_sources/gd_melee/text.inl"
  #include "pc_settings_visuals.inl"
@@ -262,7 +329,7 @@ index 871cf2c..07fc296 100644
  
  // A change that applies at the next start (a mod look, an audio driver, a graphics backend): a button
  // that saves the settings and restarts the game, instead of the player closing and reopening it. The
-@@ -4415,7 +4428,22 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
+@@ -4415,7 +4477,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
         << "\nlcancel_flash_mode " << mu_lcancel_flash_mode(options.te_options2, lcancel::flash_mode())
         << "\nlcancel_success_flash " << mu_lcancel_success_color(options.te_options2)
         << "\nlcancelindicator " << (lcancel::indicator_enabled() ? 1 : 0)
@@ -282,11 +349,13 @@ index 871cf2c..07fc296 100644
 +    if (pad_mods::sub_option_label(m))
 +      file << "\n" << pad_mods::info(m).ini_key << "_sub " << (pad_mods::sub_option(m) ? 1 : 0);
 +  }
++  for (int k = 0; k < pad_mods::kAiKinds; ++k)
++    if (pad_mods::ai_choice(k) != pad_mods::kAiDefault) file << "\npadmod_aipick_" << k << " " << pad_mods::ai_choice(k);
 +  file
         << "\npalstockicons " << (gecko::option_pal_stock_icons ? 1 : 0)
         << "\nnoscreenshake " << (gecko::option_no_screen_shake ? 1 : 0)
         << "\nscreenshake " << gecko::option_screen_shake_percent
-@@ -5067,6 +5095,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5067,6 +5146,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      else if (const char* tab = host::test_env::getenv("MELEE_TEST_SETTINGS_TAB"))
        state.active_tab = std::clamp(std::atoi(tab), 0, 7);
      if (test_menu_style() >= 0) options.overlay_style = test_menu_style();
@@ -295,7 +364,7 @@ index 871cf2c..07fc296 100644
    }
    const auto reset_settings_home = [&state](const char* why) {
      if (g_ui_diag) host::log("ui diag: settings reset to home (%s), tab %d", why, state.active_tab);
-@@ -9273,7 +9303,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9273,7 +9354,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        ImGui::EndDisabled();
        if (ranked) settings_hint(lcancel::policy::ranked_hint);
        if (host::gameplay::vanilla_only()) settings_hint("Disabled for this vanilla-only session.");
@@ -305,7 +374,7 @@ index 871cf2c..07fc296 100644
  #ifdef MELEE_NO_SLIPPI   // this build's matches are all the one kind, where it works
        settings_hint("(NOTE: Works offline and in online matches)");
        if (automatic) {
-@@ -9292,6 +9323,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9292,6 +9374,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        }
      }
  
@@ -322,12 +391,21 @@ index 871cf2c..07fc296 100644
      // ---- HUD ----
      // A port code compiled into the game (recomp/gecko.py PORT_CODES): the stock row drawn at PAL's
      // size and height. Display only, read when the HUD is built, so it applies from the next match.
+@@ -10823,7 +10915,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+   if (!state.fill_window && !state.open && !state.menu_open && options.show_player_nicknames)
+     draw_player_nicknames();
+   if (!state.fill_window && !state.open && !state.menu_open) draw_combo_counter();
+-  if (!state.fill_window && !state.open && !state.menu_open) draw_community_code_overlays();
++  if (!state.fill_window && !state.open && !state.menu_open) { draw_community_code_overlays(); draw_ai_takeover_labels(); }
+   if (!state.fill_window && !state.open && !state.menu_open && !g_hud_match && yougame::stdio_bridge())
+     draw_back_to_yougame_hint();
+   {
 diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
 new file mode 100644
-index 0000000..ffca416
+index 0000000..2de23f9
 --- /dev/null
 +++ b/port/runtime/gx/vooby_ui.inl
-@@ -0,0 +1,355 @@
+@@ -0,0 +1,415 @@
 +// Vooby Mods window (F1 > Game > Vooby Mods > Open): a popup of its own over the settings, with a
 +// header, one tab per group and a card per mod. Every control is a real ImGui item (an invisible
 +// button drawn over), so mouse, keyboard and controller navigation all work as in the rest of F1.
@@ -563,6 +641,64 @@ index 0000000..ffca416
 +  return click;
 +}
 +
++// The AI takeover tab: its switch, then one row per character with the AI it gets.
++inline int pro_count() { return (int)(sizeof practice_ghosts::kGhosts / sizeof practice_ghosts::kGhosts[0]); }
++inline bool pro_ok(int i) {
++  return i >= 0 && i < pro_count() && practice_ghosts::kReleased[i] && ghost_ai::specialist_available((unsigned)i);
++}
++inline bool ai_tab() {
++  bool changed = card(pad_mods::AiTakeover);
++  if (!pad_mods::enabled(pad_mods::AiTakeover)) return changed;
++  const float s = S();
++  ImDrawList* d = ImGui::GetWindowDrawList();
++  ImGui::Dummy(ImVec2(0, 4 * s));
++  d->AddText(settings_heading_font(), 17 * s, ImGui::GetCursorScreenPos(), kInk, "AI PER CHARACTER");
++  ImGui::Dummy(ImVec2(0, 24 * s));
++  const float width = ImGui::GetContentRegionAvail().x;
++  const float combo_w = std::min(300 * s, width * 0.5f);
++  int row = 0;
++  for (int k = 0; k < pad_mods::kAiKinds; ++k) {
++    const char* name = pad_mods::ai_kind_name(k);
++    if (!name[0]) continue;
++    // the choices: Auto, this character's pros, the practice CPU styles
++    struct Opt { int value; std::string label; };
++    std::vector<Opt> opts;
++    int pro = -1;
++    for (int i = 0; i < pro_count(); ++i)
++      if (practice_ghosts::kGhosts[i].kind == k && pro_ok(i)) { pro = i; break; }
++    opts.push_back({pad_mods::kAiDefault, std::string("Auto (") + (pro >= 0 ? std::string(practice_ghosts::kGhosts[pro].name) + "'s AI" : "Balanced") + ")"});
++    for (int i = 0; i < pro_count(); ++i)
++      if (practice_ghosts::kGhosts[i].kind == k && pro_ok(i))
++        opts.push_back({0x80 | i, std::string("Pro AI: ") + practice_ghosts::kGhosts[i].name});
++    for (int i = 0; i < mu_pc_preset_count(); ++i) opts.push_back({i, std::string("CPU: ") + mu_pc_preset_name(i)});
++    int cur = 0;
++    for (size_t i = 0; i < opts.size(); ++i) if (opts[i].value == pad_mods::ai_choice(k)) cur = (int)i;
++    const ImVec2 a = ImGui::GetCursorScreenPos(), b(a.x + width, a.y + 40 * s);
++    d->AddRectFilled(a, b, (row++ & 1) ? IM_COL32(255, 255, 255, 6) : IM_COL32(255, 255, 255, 12), 8 * s);
++    d->AddText(ImVec2(a.x + 14 * s, a.y + 20 * s - ImGui::GetFontSize() * 0.5f), kInk, name);
++    if (pro >= 0) {   // a little star for characters with a pro AI
++      const float tx = a.x + 14 * s + ImGui::CalcTextSize(name).x + 10 * s;
++      d->AddText(ImVec2(tx, a.y + 20 * s - ImGui::GetFontSize() * 0.5f), kPink, "PRO");
++    }
++    ImGui::SetCursorScreenPos(ImVec2(b.x - combo_w - 10 * s, a.y + 6 * s));
++    ImGui::PushID(k);
++    ImGui::SetNextItemWidth(combo_w);
++    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8 * s);
++    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGui::ColorConvertU32ToFloat4(IM_COL32(14, 15, 30, 255)));
++    if (ImGui::BeginCombo("##ai", opts[cur].label.c_str())) {
++      for (size_t i = 0; i < opts.size(); ++i)
++        if (ImGui::Selectable(opts[i].label.c_str(), (int)i == cur)) { pad_mods::set_ai_choice(k, opts[i].value); changed = true; }
++      ImGui::EndCombo();
++    }
++    ImGui::PopStyleColor();
++    ImGui::PopStyleVar();
++    ImGui::PopID();
++    ImGui::SetCursorScreenPos(ImVec2(a.x, b.y + 4 * s));
++    ImGui::Dummy(ImVec2(width, 0));
++  }
++  return changed;
++}
++
 +// Draws the popup if open. Returns true when a setting changed (the caller saves).
 +inline bool draw(bool* open) {
 +  bool changed = false;
@@ -614,7 +750,7 @@ index 0000000..ffca416
 +  }
 +
 +  // ---- sidebar: one tab per group
-+  static int tab = 0;
++  static int tab = std::getenv("MU_VOOBY_UI_OPEN") ? std::atoi(std::getenv("MU_VOOBY_UI_OPEN")) : 0;   // test hook: start on that tab
 +  const float sw = 200 * s, top = wp.y + hh, foot = 54 * s;
 +  d->AddRectFilled(ImVec2(wp.x, top), ImVec2(wp.x + sw, wp.y + ws.y), IM_COL32(10, 11, 22, 255), 16 * s, ImDrawFlags_RoundCornersBottomLeft);
 +  float ty = top + 18 * s;
@@ -652,8 +788,10 @@ index 0000000..ffca416
 +      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
 +      pad_mods::FoxFalcoShine, pad_mods::ShineWavedash, pad_mods::ShieldShine, pad_mods::FoxLaserLoop,
 +      pad_mods::HumanTiming};
-+  for (int m : kOrder)
-+    if (pad_mods::info(m).group == tab) changed |= card(m);
++  if (tab == pad_mods::AiGroup) changed |= ai_tab();
++  else
++    for (int m : kOrder)
++      if (pad_mods::info(m).group == tab) changed |= card(m);
 +  ImGui::EndDisabled();
 +  ImGui::EndChild();
 +  ImGui::PopStyleVar();
@@ -768,6 +906,289 @@ index 06c151b..d9fd254 100644
  // In-game player slot of the local player in an online match (0..3).
  int local_player_index();
  // True while the game is polling the online menus (mode select, the online character select screen,
+diff --git a/port/runtime/host/ai_takeover.cpp b/port/runtime/host/ai_takeover.cpp
+new file mode 100644
+index 0000000..73b2665
+--- /dev/null
++++ b/port/runtime/host/ai_takeover.cpp
+@@ -0,0 +1,245 @@
++// Vooby Mods' AI takeover: see ai_takeover.h.
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include "ai_takeover.h"
++
++#include <algorithm>
++#include <atomic>
++#include <cmath>
++#include <cstring>
++#include <mutex>
++
++#include "ghost_ai.h"
++#include "../abi/mu_ghost_ai.h"
++#include "../abi/mu_practice_cpu.h"
++#include "pad_mods.h"
++#include "practice_ghosts.h"
++
++namespace ai_takeover {
++namespace {
++
++// One player's post-frame event (payload offsets: the event without its command byte, big endian,
++// as sourceport/game/shim/mu_replay.c mu_replay_post_frame writes it).
++struct Post {
++  bool have = false;
++  int32_t frame = 0;
++  uint8_t player = 0, kind = 0, stocks = 0, jumps = 0, airborne = 0, hurtbox = 0;
++  uint16_t motion = 0;
++  float x = 0, y = 0, facing = 1, percent = 0, shield = 60, anim = 0, misc = 0;
++  float self_x = 0, self_y = 0, kb_x = 0, kb_y = 0, gr = 0, hitlag = 0;
++  uint8_t flags[5] = {};
++};
++
++std::mutex g_mu;
++Post g_post[4];          // the leader of each player slot (Nana is left out)
++int g_stage = 0;         // Slippi stage id from Game Start (31 Battlefield, 32 Final Destination ...)
++int32_t g_match = 0;     // bumped on each Game Start: the AIs forget what came before
++int32_t g_last_frame = -1000;
++
++uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
++float bef(const uint8_t* p) { const uint32_t u = be32(p); float f; std::memcpy(&f, &u, 4); return f; }
++
++// The practice CPU's model memory per controller, and the pro AI's last controller (what the
++// network remembers holding).
++MuPcState g_state[4];
++int32_t g_state_match[4] = {-1, -1, -1, -1};
++MuGhostAct g_applied[4];
++int32_t g_ghost_match[4] = {-1, -1, -1, -1};
++
++int pro_count() { return (int)(sizeof practice_ghosts::kGhosts / sizeof practice_ghosts::kGhosts[0]); }
++bool pro_ok(int i) {
++  return i >= 0 && i < pro_count() && practice_ghosts::kReleased[i] && ghost_ai::specialist_available((unsigned)i);
++}
++
++// Slippi stage id -> the game's internal stage id (what mu_pc_stage_ledge takes).
++int internal_stage(int slippi) {
++  switch (slippi) {
++    case 2: return 0x0C; case 3: return 0x10; case 8: return 0x0A;
++    case 28: return 0x1C; case 31: return 0x24; case 32: return 0x25; default: return -1;
++  }
++}
++
++void to_ghost(const Post& p, MuGhostFighter& g) {
++  std::memset(&g, 0, sizeof g);
++  g.num[0] = p.x; g.num[1] = p.y; g.num[2] = p.facing; g.num[3] = p.percent; g.num[4] = p.shield;
++  g.num[5] = (float)p.stocks; g.num[6] = p.anim; g.num[7] = p.misc; g.num[8] = p.airborne ? 1.0f : 0.0f;
++  g.num[9] = (float)p.jumps; g.num[10] = p.self_x; g.num[11] = p.self_y; g.num[12] = p.kb_x;
++  g.num[13] = p.kb_y; g.num[14] = p.gr; g.num[15] = p.hitlag;
++  g.motion = p.motion;
++  g.kind = p.kind;
++  std::memcpy(g.flags, p.flags, 5);
++  g.hurtbox = p.hurtbox;
++}
++
++// As port/runtime/hle/practice_cpu.cpp read_fighter has it, from the post-frame instead of memory.
++void to_pc(const Post& p, MuPcFighter& f) {
++  std::memset(&f, 0, sizeof f);
++  if (!p.have) return;
++  f.present = 1;
++  f.kind = p.kind;
++  f.motion = p.motion;
++  f.facing = p.facing;
++  f.x = p.x; f.y = p.y;
++  f.vx = (p.airborne ? p.self_x : p.gr) + p.kb_x;
++  f.vy = p.self_y + p.kb_y;
++  f.airborne = p.airborne;
++  f.percent = p.percent;
++  f.shield = p.shield;
++  f.hitlag = p.hitlag > 0.0f;
++  f.hitstun = (p.flags[3] & 0x02) != 0;   // x221C_b6
++  f.jumps_left = p.jumps;
++  const int m = p.motion;
++  f.can_act = !f.hitlag && !f.hitstun &&
++              ((p.flags[0] & 0x80) != 0 ||   // allow_interrupt
++               (m >= 14 && m <= 21) || (m >= 27 && m <= 34) || m == 38 || m == 39 || m == 40 || m == 179 ||
++               m == 245 || m == 246);
++}
++
++// A controller as floats (the game's units) -> the raw pad the game reads.
++void to_pad(float lx, float ly, float cx, float cy, float l, float r, uint32_t buttons, host::PadState& out) {
++  auto st = [](float v) { v = std::clamp(v, -1.0f, 1.0f); return (int8_t)std::lround(v * 80.0f); };
++  auto tr = [](float v) { v = std::clamp(v, 0.0f, 1.0f); return (uint8_t)(v <= 0.0f ? 0 : std::min(255L, std::lround(30.0f + v * 150.0f))); };
++  out.button = (uint16_t)(buttons & 0x1F7F);   // the GameCube buttons (MU_PC_* = PAD bits)
++  out.stick_x = st(lx); out.stick_y = st(ly);
++  out.sub_x = st(cx); out.sub_y = st(cy);
++  out.trig_l = tr(l); out.trig_r = tr(r);
++  if (out.button & 0x0040) out.trig_l = 255;   // a click comes with a full press
++  if (out.button & 0x0020) out.trig_r = 255;
++}
++
++}  // namespace
++
++void note_event(uint8_t command, const uint8_t* p, uint32_t size) {
++  std::lock_guard<std::mutex> lock(g_mu);
++  if (command == 0x36) {   // Game Start: a new match
++    for (auto& q : g_post) q = Post{};
++    g_stage = size > 0x14 ? (int)((p[0x12] << 8) | p[0x13]) : 0;
++    ++g_match;
++    return;
++  }
++  if (command != 0x38 || size < 0x50) return;
++  const uint8_t player = p[0x04];
++  if (player > 3 || p[0x05]) return;   // the leader only (no Nana)
++  Post& q = g_post[player];
++  q.have = true;
++  q.frame = (int32_t)be32(p);
++  q.player = player;
++  q.kind = p[0x06];
++  q.motion = (uint16_t)((p[0x07] << 8) | p[0x08]);
++  q.x = bef(p + 0x09); q.y = bef(p + 0x0D); q.facing = bef(p + 0x11);
++  q.percent = bef(p + 0x15); q.shield = bef(p + 0x19);
++  q.stocks = p[0x20];
++  q.anim = bef(p + 0x21);
++  std::memcpy(q.flags, p + 0x25, 5);
++  { const uint32_t u = be32(p + 0x2A); std::memcpy(&q.misc, &u, 4); }   // the raw word, as the game's obs has it
++  q.airborne = p[0x2E];
++  q.jumps = p[0x31];
++  q.hurtbox = p[0x33];
++  q.self_x = bef(p + 0x34); q.self_y = bef(p + 0x38);
++  q.kb_x = bef(p + 0x3C); q.kb_y = bef(p + 0x40);
++  q.gr = bef(p + 0x44); q.hitlag = bef(p + 0x48);
++  g_last_frame = q.frame;
++}
++
++int pick(int kind) {
++  const int c = pad_mods::ai_choice(kind);
++  if (c >= 0 && c < 0x80 && c < mu_pc_preset_count()) return c;
++  if (c >= 0x80 && pro_ok(c & 0x7F)) return c;
++  for (int i = 0; i < pro_count(); ++i)
++    if (practice_ghosts::kGhosts[i].kind == kind && pro_ok(i)) return 0x80 | i;
++  return 0;
++}
++
++bool drive(int port, host::PadState& out) {
++  // Offline the player slot is the controller port (pad_mods' view files fighters the same way).
++  Post self, opp;
++  int stage, match;
++  {
++    std::lock_guard<std::mutex> lock(g_mu);
++    if (port < 0 || port > 3 || !g_post[port].have) return false;
++    self = g_post[port];
++    float best = 1e30f;
++    for (int k = 0; k < 4; ++k) {   // against the nearest other fighter
++      if (k == port || !g_post[k].have || g_post[k].frame != self.frame) continue;
++      const float dx = g_post[k].x - self.x, dy = g_post[k].y - self.y;
++      if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; opp = g_post[k]; }
++    }
++    stage = g_stage;
++    match = g_match;
++  }
++  const int choice = pick(self.kind);
++  const int err = out.err;
++  {   // one line per port and match: which AI took over
++    static int32_t said[4] = {-1, -1, -1, -1};
++    static int said_choice[4] = {-1, -1, -1, -1};
++    if (said[port] != match || said_choice[port] != choice) {
++      said[port] = match; said_choice[port] = choice;
++      host::log("ai takeover: controller %d (kind %d) plays as %s%s", port + 1, (int)self.kind,
++                (choice & 0x80) ? "pro AI " : "practice CPU ",
++                (choice & 0x80) ? practice_ghosts::kGhosts[choice & 0x7F].name : mu_pc_preset_name(choice));
++    }
++  }
++
++  if (choice & 0x80) {   // a pro AI
++    MuGhostObs obs;
++    std::memset(&obs, 0, sizeof obs);
++    obs.version = MU_GHOST_VERSION;
++    obs.pro = (unsigned char)(choice & 0x7F);
++    obs.slot = (unsigned char)port;
++    obs.reset = g_ghost_match[port] != match;
++    g_ghost_match[port] = match;
++    obs.stage = (short)((stage == 2 || stage == 3 || stage == 8 || stage == 28 || stage == 31 || stage == 32) ? stage : 0);
++    obs.frame = (unsigned)self.frame;
++    obs.match_frame = self.frame;
++    obs.applied = g_applied[port];
++    to_ghost(self, obs.self);
++    to_ghost(opp.have ? opp : self, obs.opp);
++    MuGhostAct act{};
++    if (ghost_ai::act(obs, act)) {
++      act.buttons &= ~MU_GHOST_ACT_OWN_RECOVERY;
++      g_applied[port] = act;
++      to_pad(act.lx, act.ly, act.cx, act.cy, act.l, act.r, act.buttons, out);
++      out.err = (int8_t)err;
++      return true;
++    }
++    // no network answer: the practice CPU below plays
++    static int warned;
++    if (warned++ < 3) host::log("ai takeover: the pro AI gave no controller, the practice CPU plays");
++  }
++
++  MuPcConfig c;
++  std::memset(&c, 0, sizeof c);
++  mu_pc_defaults(&c);
++  c.enabled = 1;
++  if (!(choice & 0x80)) mu_pc_preset(choice, &c);
++  c.enabled = 1;
++  c.freeze = 0;
++  c.recovery = MU_PC_RECOVER_MIX;   // a player's fighter has no game CPU to recover for it
++  MuPcView v;
++  std::memset(&v, 0, sizeof v);
++  to_pc(self, v.cpu);
++  to_pc(opp, v.opp);
++  if (!v.opp.present) v.opp = v.cpu;
++  mu_pc_stage_ledge(internal_stage(stage), &v.ledge_x, &v.ledge_y);
++  v.frame = (uint32_t)self.frame;
++  v.land_frames = -1;
++  if (v.cpu.airborne && v.cpu.vy < 0.0f && std::fabs(v.cpu.x) <= v.ledge_x && v.cpu.y >= v.ledge_y - 1.0f)
++    v.land_frames = (int32_t)((v.cpu.y - v.ledge_y) / -v.cpu.vy);
++  if (g_state_match[port] != match) {
++    mu_pc_reset(&g_state[port], 0x9E3779B9u ^ ((uint32_t)match * 2654435761u) ^ (uint32_t)port);
++    g_state_match[port] = match;
++  }
++  MuPcInput in{};
++  if (!mu_pc_frame(&c, &g_state[port], &v, &in)) {
++    to_pad(0, 0, 0, 0, 0, 0, 0, out);   // nothing to do (entering, dead): hands off
++  } else {
++    to_pad(in.lx, in.ly, in.cx, in.cy, in.l, in.r, in.buttons, out);
++  }
++  out.err = (int8_t)err;
++  return true;
++}
++
++}  // namespace ai_takeover
++
++namespace {
++const bool g_registered = (pad_mods::set_ai_driver(&ai_takeover::drive), true);
++}
+diff --git a/port/runtime/host/ai_takeover.h b/port/runtime/host/ai_takeover.h
+new file mode 100644
+index 0000000..7005e29
+--- /dev/null
++++ b/port/runtime/host/ai_takeover.h
+@@ -0,0 +1,26 @@
++// Vooby Mods' AI takeover (pad_mods.h AiTakeover): an AI plays a player's fighter by writing that
++// controller's pad, the same way every other Vooby Mod adds presses, so the game library is the
++// release's own and nothing inside the match changes (a library built here would desync online).
++//
++// What the AI sees is what the replay records after each frame (the post-frame event, the same
++// numbers the pro AI was trained on): source_host hands every replay event to note_event. Each pad
++// read, drive() answers with the controller for that port from the AI picked for its character:
++// a practice CPU style (the practice CPU's model, mu_pc_frame) or a pro AI (ghost_ai::act), one
++// frame behind like the game-side AIs.
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++#include <cstdint>
++#include "host.h"
++
++namespace ai_takeover {
++
++// Every replay event the game sends (Game Start resets, post-frames are kept per player).
++void note_event(uint8_t command, const uint8_t* payload, uint32_t size);
++// The AI a character gets: the choice saved (pad_mods::ai_choice) when it can play, else the pro who
++// plays that character when that pro's file loaded, else the Balanced practice CPU (0).
++int pick(int kind);
++// The controller an AI holds this frame for the fighter on controller `port`. False: nothing to
++// play (no match, no fighter on that port yet); the player's own pad stays.
++bool drive(int port, host::PadState& out);
++
++}  // namespace ai_takeover
 diff --git a/port/runtime/host/host.h b/port/runtime/host/host.h
 index d0dc898..af5e04c 100644
 --- a/port/runtime/host/host.h
@@ -917,10 +1338,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..2d39725
+index 0000000..e0410c1
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2038 @@
+@@ -0,0 +1,2109 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -1125,6 +1546,12 @@ index 0000000..2d39725
 +     "down, in place straight down +-4), and the stick goes back to yours through a halfway\n"
 +     "position instead of jumping. Nothing else varies: every trick's timing is exact.\n"
 +     "Off: the wavedash angle is always the same, the stick snaps back.", Options},
++    {"padmod_ai_takeover", "AI takeover (D-pad down)", "Press D-pad down in a match and an AI plays your character; press it again to play.",
++     "On: in an offline match, D-pad down hands your character to an AI, which plays from that\n"
++     "frame on; D-pad down again and you play again, on the same frame. An \"AI\" sign floats over\n"
++     "your character meanwhile. The AI for each character is picked below: the pro AI who plays it\n"
++     "(Mang0's Falco, Zain's Marth, Cody's Fox, aMSa's Yoshi) or one of the practice CPU styles.\n"
++     "D-pad down never reaches the game while this is on. Offline only (never online).", AiGroup},
 +};
 +
 +std::atomic<bool> g_on[kCount] = {};
@@ -2751,6 +3178,7 @@ index 0000000..2d39725
 +    case AllCharacters: return "All characters";
 +    case FoxFalco: return "Fox & Falco";
 +    case Options: return "Options";
++    case AiGroup: return "AI takeover";
 +    default: return "";
 +  }
 +}
@@ -2770,7 +3198,7 @@ index 0000000..2d39725
 +bool enabled(int mod) { return mod >= 0 && mod < kCount && g_on[mod].load(std::memory_order_relaxed); }
 +bool any_enabled() {   // a move mod (human timing alone changes nothing)
 +  for (int m = 0; m < kCount; ++m)
-+    if (info(m).group != Options && m != AutoLCancel && enabled(m)) return true;
++    if (info(m).group != Options && m != AutoLCancel && m != AiTakeover && enabled(m)) return true;
 +  return false;
 +}
 +// Slippi mode ids (lcancel_policy.h): offline < 0, Ranked 0, Unranked 1, Direct 2, Teams 3, Party 4.
@@ -2778,7 +3206,71 @@ index 0000000..2d39725
 +bool mode_allowed(int mode) { return mode < 0 || mode == 2 || mode == 3; }
 +bool allowed_now() { return !host::gameplay::vanilla_only() && mode_allowed(slippi::online::session_mode()); }
 +
++// ---- AI takeover ----
++std::atomic<int> g_ai_choice[kAiKinds] = {};
++const bool g_ai_choice_defaults = [] { for (auto& c : g_ai_choice) c.store(kAiDefault); return true; }();
++std::atomic<bool> g_ai_on[4] = {};
++bool g_ai_dd_was[4] = {};
++uint32_t g_ai_retrace = 0xFFFFFFFFu;
++constexpr uint16_t kPadDDown = 0x0004;
++const char* ai_kind_name(int kind) {
++  static const char* const names[kAiKinds] = {
++      "Mario", "Fox", "Captain Falcon", "Donkey Kong", "Kirby", "Bowser", "Link", "Sheik", "Ness",
++      "Peach", "Ice Climbers", "", "Pikachu", "Samus", "Yoshi", "Jigglypuff", "Mewtwo", "Luigi",
++      "Marth", "Zelda", "Young Link", "Dr. Mario", "Falco", "Pichu", "Mr. Game & Watch", "Ganondorf", "Roy"};
++  return kind >= 0 && kind < kAiKinds ? names[kind] : "";
++}
++int ai_choice(int kind) { return kind >= 0 && kind < kAiKinds ? g_ai_choice[kind].load() : kAiDefault; }
++void set_ai_choice(int kind, int choice) { if (kind >= 0 && kind < kAiKinds) g_ai_choice[kind].store(choice); }
++bool ai_active(int port) { return port >= 0 && port < 4 && g_ai_on[port].load(std::memory_order_relaxed); }
++std::atomic<AiDriver> g_ai_driver{nullptr};
++void set_ai_driver(AiDriver driver) { g_ai_driver.store(driver); }
++host::PadState g_ai_pad[4];   // this retrace's AI controller, for a second read in the same retrace
++// D-pad down flips the AI for that controller. Only while a fighter of that port is in an offline
++// match; off everywhere else (and the flag clears, so the next match starts with you playing).
++void ai_poll(host::PadState pads[4]) {
++  const uint32_t retrace = host::retrace_count();
++  const bool repeat = retrace == g_ai_retrace;   // a second PADRead in one retrace: same answer
++  g_ai_retrace = retrace;
++  const bool ok = enabled(AiTakeover) && all_enabled() && !host::gameplay::vanilla_only() &&
++                  slippi::online::session_mode() < 0;
++  MuLcancelView view{};
++  if (ok && !repeat) lcancel::observe(&view);
++  for (int p = 0; p < 4; ++p) {
++    const bool dd = pads[p].err == 0 && (pads[p].button & kPadDDown);
++    if (!ok) { g_ai_on[p].store(false); g_ai_dd_was[p] = dd; continue; }
++    if (!repeat) {
++      if (!view.port[p].present) g_ai_on[p].store(false);
++      else if (dd && !g_ai_dd_was[p]) {
++        g_ai_on[p].store(!g_ai_on[p].load());
++        host::log("padmods: AI takeover %s on controller %d (kind %d)", g_ai_on[p].load() ? "on" : "off", p + 1,
++                  (int)view.fighter_kind[p] - 1);
++      }
++      g_ai_dd_was[p] = dd;
++    }
++    if (dd) pads[p].button &= (uint16_t)~kPadDDown;   // the switch, never the game's
++  }
++}
++
++void apply_mods(host::PadState pads[4]);
++// The pads as the game gets them: D-pad down for the takeover, the mods, then an AI's controller in
++// place of the pad of every port it plays for (after the mods: none of them touches the AI's presses).
 +void apply(host::PadState pads[4]) {
++  const uint32_t retrace = host::retrace_count();
++  const bool repeat = retrace == g_ai_retrace;
++  ai_poll(pads);
++  apply_mods(pads);
++  const AiDriver drive = g_ai_driver.load();
++  for (int p = 0; p < 4; ++p) {
++    if (!ai_active(p) || !drive) continue;
++    if (repeat) { pads[p] = g_ai_pad[p]; continue; }
++    host::PadState ai = pads[p];
++    if (drive(p, ai)) { pads[p] = ai; g_ai_pad[p] = ai; }
++    else g_ai_pad[p] = pads[p];
++  }
++}
++
++void apply_mods(host::PadState pads[4]) {
 +  if (!all_enabled() || !any_enabled() || !allowed_now()) { reset(); return; }
 +
 +  const uint32_t retrace = host::retrace_count();
@@ -2961,10 +3453,10 @@ index 0000000..2d39725
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..a4d29e6
+index 0000000..88fe529
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,132 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -3035,11 +3527,14 @@ index 0000000..a4d29e6
 +  // Not a move of its own: the wavedash angle varies a few degrees and the stick is handed back
 +  // through a halfway position like a thumb. On unless turned off.
 +  HumanTiming = 13,
++  // D-pad down in an offline match: an AI plays your character until D-pad down again (the game
++  // side, shim/mu_ai_takeover.c, drives the fighter with the AI picked for that character).
++  AiTakeover = 14,
 +  kCount
 +};
 +
 +// Menu groups (F1 > Game > Vooby Mods): each its own sub menu.
-+enum Group : int { AllCharacters = 0, FoxFalco = 1, Options = 2, kGroupCount, Hidden = -1 };
++enum Group : int { AllCharacters = 0, FoxFalco = 1, Options = 2, AiGroup = 3, kGroupCount, Hidden = -1 };
 +const char* group_name(int group);
 +
 +struct Info {
@@ -3074,6 +3569,21 @@ index 0000000..a4d29e6
 +// Off in matchmaking modes or a vanilla-only session, whatever the saved choice.
 +bool allowed_now();
 +bool mode_allowed(int slippi_mode);
++
++// ---- AI takeover (AiTakeover) ----
++// Characters by the game's internal fighter kind (0 Mario .. 26 Roy); the AI picked for each:
++// kAiDefault (the pro AI who plays it if there is one, else the "Balanced" practice CPU),
++// 0..7 a practice CPU style (mu_pc_preset), or 0x80 | pro (MU_PC_PRESET_PRO).
++constexpr int kAiKinds = 27;
++constexpr int kAiDefault = -1;
++const char* ai_kind_name(int kind);   // "" for kinds not offered (Nana, Master Hand...)
++int ai_choice(int kind);
++void set_ai_choice(int kind, int choice);
++// Whether an AI is playing for this controller now (D-pad down flips it; offline matches only).
++bool ai_active(int port);
++// The AI's controller for a port (ai_takeover.cpp registers it; the unit tests run without one).
++using AiDriver = bool (*)(int port, host::PadState& out);
++void set_ai_driver(AiDriver driver);
 +
 +// Called with the freshly polled pads, after lcancel::apply and before the game reads them.
 +void apply(host::PadState pads[4]);
