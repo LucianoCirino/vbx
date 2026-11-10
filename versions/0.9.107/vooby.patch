@@ -55,7 +55,7 @@ index a82bcc9..0acfce4 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index 4706561..207106d 100644
+index 4706561..40d1517 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
 @@ -57,8 +57,10 @@
@@ -169,16 +169,45 @@ index 4706561..207106d 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2249,6 +2314,8 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2249,6 +2314,37 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
++  if (pad_mods::enabled(pad_mods::AiTakeover) && g_game.state_snapshot && g_game.practice) {
++    // The AI takeover's fallback when no replay is recorded (Training, offline with saving off).
++    MuStatePod pod{};
++    g_game.state_snapshot(&pod);
++    MuLcancelView raw{};
++    if (g_game.lcancel_view) g_game.lcancel_view(&raw);
++    static const int8_t kCKindToFtKind[0x1A] = {
++        0x02, 0x03, 0x01, 0x18, 0x04, 0x05, 0x06, 0x11, 0x00, 0x12, 0x10, 0x08, 0x09,
++        0x0C, 0x0A, 0x0F, 0x0D, 0x0E, 0x13, 0x07, 0x16, 0x14, 0x15, 0x1A, 0x17, 0x19};
++    ai_takeover::SnapFighter snap[4];
++    auto f32 = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
++    for (int s = 0; s < 4; ++s) {
++      const MuFighterState& p = pod.player[s];
++      if (!p.present) continue;
++      int32_t a[9] = {s, 0, 0, 0, 0, 0, 0, 0, 0};
++      if (g_game.practice(MU_PRACTICE_GET_PLAYER, a, 9) != 0 || a[2] < 0 || a[2] >= 0x1A) continue;
++      ai_takeover::SnapFighter& f = snap[s];
++      f.present = true;
++      f.kind = kCKindToFtKind[a[2]];
++      f.action = (int)p.action; f.stocks = (int)p.stocks;
++      f.x = f32(p.pos_x); f.y = f32(p.pos_y); f.vx = f32(p.vel_x); f.vy = f32(p.vel_y);
++      f.anim = f32(p.anim_frame); f.percent = f32(p.percent); f.facing = f32(p.facing);
++      for (const auto& v : raw.port)
++        if (v.present && v.slot == s) { f.air_known = true; f.airborne = v.ground_or_air != 0; }
++    }
++    int32_t stage[1] = {-1};
++    g_game.practice(MU_PRACTICE_GET_STAGE, stage, 1);
++    ai_takeover::note_snapshot(snap, stage[0]);
++  }
 +  pad_mods::apply(pads);  // training input mods, the same way
 +  host::input_show_pads(pads);   // the controller overlay shows the mods' presses as the player's
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -3274,6 +3341,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+@@ -3274,6 +3370,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
  }
  
  void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
@@ -186,7 +215,7 @@ index 4706561..207106d 100644
  #ifdef YOUGAME_AGENT_TEST_HOOK
    if (command == 0x36)
      g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
-@@ -4129,7 +4197,7 @@ int run(void (*shutdown)(int)) {
+@@ -4129,7 +4226,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -227,7 +256,7 @@ index 8b1b559..18c87d5 100644
  
  #endif
 diff --git a/port/runtime/gx/pc_settings.cpp b/port/runtime/gx/pc_settings.cpp
-index 871cf2c..62d5ba9 100644
+index 871cf2c..98f9383 100644
 --- a/port/runtime/gx/pc_settings.cpp
 +++ b/port/runtime/gx/pc_settings.cpp
 @@ -52,6 +52,10 @@
@@ -241,7 +270,29 @@ index 871cf2c..62d5ba9 100644
  #include "../abi/mu_lcancel_flash.h"
  #include "user_gecko.h"
  
-@@ -455,6 +459,50 @@ static void draw_community_code_overlays() {
+@@ -405,6 +409,13 @@ static void draw_combo_counter() {
+   draw->PopClipRect();
+ }
+ 
++// An AI plays for one of this machine's controllers (Vooby Mods' AI takeover): its badge then takes
++// the place of YOU over the local fighter.
++static bool ai_badge_on() {
++  for (int p = 0; p < 4; ++p) if (pad_mods::ai_active(p)) return true;
++  return false;
++}
++
+ // Community codes drawn over the match (HUD tab), from what the native game reports each drawn frame
+ // (host API 24), in the game's font. Nana's percent: under each Ice Climbers player's damage, while
+ // Nana is in play. Ally markers (online, as the code has them): YOU over your own fighter, a heart
+@@ -444,6 +455,7 @@ static void draw_community_code_overlays() {
+       const HudPlayerSnapshot& p = g_hud_players[slot];
+       const bool mine = slot == me, ally = !mine && p.team >= 0 && p.team == g_hud_players[me].team;
+       if (!p.present || (!mine && !ally)) continue;
++      if (mine && ai_badge_on()) continue;   // the AI takeover's badge stands in that place instead
+       if (!std::isfinite(p.tag_x) || !std::isfinite(p.tag_y) || p.tag_y <= 0.0f) continue;
+       const char* label = mine ? "YOU" : "\xE2\x99\xA5";
+       const float w = practice_menu::text_width(px, label);
+@@ -455,6 +467,50 @@ static void draw_community_code_overlays() {
    draw->PopClipRect();
  }
  
@@ -292,7 +343,7 @@ index 871cf2c..62d5ba9 100644
  static void draw_player_nicknames() {
    if (!g_hud_match) return;
    const OverlayBounds bounds = overlay_bounds();
-@@ -733,7 +781,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
+@@ -733,7 +789,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
  // while the settings panel is open, which is when the overlay may be dragged and resized.
  static void draw_input_overlay(int port, int row, bool lone, bool editable, bool borderless, bool values, int knob) {
    host::PadState pads[4]{};
@@ -301,7 +352,7 @@ index 871cf2c..62d5ba9 100644
    int slot = port < 0 || port > 3 ? 0 : port;
    // An adapter socket the player is not using reports nothing, and the overlay then drew an empty
    // controller with no hint why. With a single port selected, show the first one that has a device
-@@ -2371,6 +2419,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
+@@ -2371,6 +2427,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
        else if (key == "lcancel_flash_mode") saved_lcancel_flash = std::clamp(std::stoi(value), 0, 6);
        else if (key == "lcancel_success_flash") saved_lcancel_success = std::clamp(std::stoi(value), 0, 2);
        else if (key == "autolcancel") lcancel::set_automatic(value == "1");
@@ -323,7 +374,7 @@ index 871cf2c..62d5ba9 100644
        else if (key == "palstockicons") gecko::option_pal_stock_icons = value == "1";
        else if (key == "noscreenshake") gecko::option_no_screen_shake = value == "1";
        else if (key == "screenshake") gecko::option_screen_shake_percent = std::clamp(std::stoi(value), 0, 200);
-@@ -2775,6 +2838,7 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
+@@ -2775,6 +2846,7 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
  
  #include "ui_sources/gd_melee/text.inl"
  #include "pc_settings_visuals.inl"
@@ -331,7 +382,7 @@ index 871cf2c..62d5ba9 100644
  
  // A change that applies at the next start (a mod look, an audio driver, a graphics backend): a button
  // that saves the settings and restarts the game, instead of the player closing and reopening it. The
-@@ -4415,7 +4479,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
+@@ -4415,7 +4487,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
         << "\nlcancel_flash_mode " << mu_lcancel_flash_mode(options.te_options2, lcancel::flash_mode())
         << "\nlcancel_success_flash " << mu_lcancel_success_color(options.te_options2)
         << "\nlcancelindicator " << (lcancel::indicator_enabled() ? 1 : 0)
@@ -357,7 +408,7 @@ index 871cf2c..62d5ba9 100644
         << "\npalstockicons " << (gecko::option_pal_stock_icons ? 1 : 0)
         << "\nnoscreenshake " << (gecko::option_no_screen_shake ? 1 : 0)
         << "\nscreenshake " << gecko::option_screen_shake_percent
-@@ -5067,6 +5148,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5067,6 +5156,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      else if (const char* tab = host::test_env::getenv("MELEE_TEST_SETTINGS_TAB"))
        state.active_tab = std::clamp(std::atoi(tab), 0, 7);
      if (test_menu_style() >= 0) options.overlay_style = test_menu_style();
@@ -366,7 +417,7 @@ index 871cf2c..62d5ba9 100644
    }
    const auto reset_settings_home = [&state](const char* why) {
      if (g_ui_diag) host::log("ui diag: settings reset to home (%s), tab %d", why, state.active_tab);
-@@ -9273,7 +9356,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9273,7 +9364,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        ImGui::EndDisabled();
        if (ranked) settings_hint(lcancel::policy::ranked_hint);
        if (host::gameplay::vanilla_only()) settings_hint("Disabled for this vanilla-only session.");
@@ -376,7 +427,7 @@ index 871cf2c..62d5ba9 100644
  #ifdef MELEE_NO_SLIPPI   // this build's matches are all the one kind, where it works
        settings_hint("(NOTE: Works offline and in online matches)");
        if (automatic) {
-@@ -9292,6 +9376,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9292,6 +9384,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        }
      }
  
@@ -393,7 +444,7 @@ index 871cf2c..62d5ba9 100644
      // ---- HUD ----
      // A port code compiled into the game (recomp/gecko.py PORT_CODES): the stock row drawn at PAL's
      // size and height. Display only, read when the HUD is built, so it applies from the next match.
-@@ -10823,7 +10917,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -10823,7 +10925,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
    if (!state.fill_window && !state.open && !state.menu_open && options.show_player_nicknames)
      draw_player_nicknames();
    if (!state.fill_window && !state.open && !state.menu_open) draw_combo_counter();
@@ -404,10 +455,10 @@ index 871cf2c..62d5ba9 100644
    {
 diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
 new file mode 100644
-index 0000000..2de23f9
+index 0000000..31b5897
 --- /dev/null
 +++ b/port/runtime/gx/vooby_ui.inl
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,519 @@
 +// Vooby Mods window (F1 > Game > Vooby Mods > Open): a popup of its own over the settings, with a
 +// header, one tab per group and a card per mod. Every control is a real ImGui item (an invisible
 +// button drawn over), so mouse, keyboard and controller navigation all work as in the rest of F1.
@@ -701,6 +752,95 @@ index 0000000..2de23f9
 +  return changed;
 +}
 +
++// The block list (port/runtime/hle/slippi_net.cpp, Matchmaking::FindMatch): connect codes in
++// blocked-codes.txt beside the game, one per line, turned down in Unranked AND Teams searches (the
++// game's own skip list counts in Teams too). Read at every search, so edits count from the next one.
++constexpr int kBlockTab = pad_mods::kGroupCount;
++inline std::vector<std::string> read_blocked() {
++  std::vector<std::string> out;
++  std::ifstream f("blocked-codes.txt");
++  std::string line;
++  while (std::getline(f, line)) {
++    line = line.substr(0, line.find(';'));
++    const auto a = line.find_first_not_of(" \t\r"), b = line.find_last_not_of(" \t\r");
++    if (a != std::string::npos) out.push_back(line.substr(a, b - a + 1));
++  }
++  return out;
++}
++inline void write_blocked(const std::vector<std::string>& codes) {
++  std::ofstream f("blocked-codes.txt", std::ios::trunc);
++  f << "; Connect codes turned down in Unranked and Teams matchmaking (Vooby Mods). One per line.\n";
++  for (const auto& c : codes) f << c << "\n";
++}
++inline void block_tab() {
++  const float s = S();
++  ImDrawList* d = ImGui::GetWindowDrawList();
++  static std::vector<std::string> codes;
++  static bool loaded = false;
++  static char input[32] = {};
++  if (!loaded) { codes = read_blocked(); loaded = true; }
++  {
++    const ImVec2 a = ImGui::GetCursorScreenPos();
++    const float w = ImGui::GetContentRegionAvail().x;
++    const char* t1 = "BLOCK LIST";
++    const char* t2 = "Matchmaking turns these connect codes down in Unranked and in Teams, and searches again.\n"
++                     "The game's own skip list (Slippi settings) now counts in Teams too.";
++    const ImVec2 ts = ImGui::CalcTextSize(t2, nullptr, false, w - 32 * s);
++    const ImVec2 b(a.x + w, a.y + 50 * s + ts.y);
++    grad(d, a, b, IM_COL32(40, 22, 60, 240), IM_COL32(24, 28, 60, 240), 12 * s);
++    d->AddText(settings_heading_font(), 19 * s, ImVec2(a.x + 18 * s, a.y + 12 * s), kInk, t1);
++    d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + 18 * s, a.y + 40 * s), kMuted, t2, nullptr, w - 32 * s);
++    ImGui::Dummy(ImVec2(w, b.y - a.y + 12 * s));
++  }
++  // add a code
++  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8 * s);
++  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10 * s, 7 * s));
++  ImGui::SetNextItemWidth(std::min(260 * s, ImGui::GetContentRegionAvail().x - 110 * s));
++  const bool enter = ImGui::InputTextWithHint("##code", "CODE#123", input, sizeof input, ImGuiInputTextFlags_EnterReturnsTrue);
++  ImGui::SameLine();
++  const bool add = ImGui::Button("Block", ImVec2(90 * s, 0)) || enter;
++  ImGui::PopStyleVar(2);
++  if (add) {
++    std::string c;
++    for (const char* p = input; *p; ++p) if (!std::isspace((unsigned char)*p)) c += (char)std::toupper((unsigned char)*p);
++    if (c.find('#') != std::string::npos && std::find(codes.begin(), codes.end(), c) == codes.end()) {
++      codes.push_back(c);
++      write_blocked(codes);
++    }
++    input[0] = 0;
++  }
++  ImGui::Dummy(ImVec2(0, 8 * s));
++  {   // the game's own skip list (Online settings), which counts in Teams too now
++    std::string own;
++    for (const auto& c : slippi::online::config().blocked_codes) if (!c.empty()) own += (own.empty() ? "" : ",  ") + c;
++    if (!own.empty()) {
++      ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kMuted), "From the game's skip list (Online settings):  %s", own.c_str());
++      ImGui::Dummy(ImVec2(0, 6 * s));
++    }
++  }
++  if (codes.empty()) { ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kMuted), "No extra codes blocked yet."); return; }
++  const float w = ImGui::GetContentRegionAvail().x;
++  for (size_t i = 0; i < codes.size(); ++i) {
++    const ImVec2 a = ImGui::GetCursorScreenPos(), b(a.x + w, a.y + 38 * s);
++    d->AddRectFilled(a, b, (i & 1) ? IM_COL32(255, 255, 255, 6) : IM_COL32(255, 255, 255, 12), 8 * s);
++    d->AddCircleFilled(ImVec2(a.x + 18 * s, a.y + 19 * s), 4 * s, kPink, 12);
++    d->AddText(ImVec2(a.x + 32 * s, a.y + 19 * s - ImGui::GetFontSize() * 0.5f), kInk, codes[i].c_str());
++    ImGui::SetCursorScreenPos(ImVec2(b.x - 96 * s, a.y + 5 * s));
++    ImGui::PushID((int)i);
++    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7 * s);
++    if (ImGui::Button("Remove", ImVec2(86 * s, 28 * s))) {
++      codes.erase(codes.begin() + (long)i);
++      write_blocked(codes);
++      ImGui::PopStyleVar(); ImGui::PopID();
++      break;
++    }
++    ImGui::PopStyleVar();
++    ImGui::PopID();
++    ImGui::SetCursorScreenPos(ImVec2(a.x, b.y + 4 * s));
++    ImGui::Dummy(ImVec2(w, 0));
++  }
++}
++
 +// Draws the popup if open. Returns true when a setting changed (the caller saves).
 +inline bool draw(bool* open) {
 +  bool changed = false;
@@ -777,6 +917,16 @@ index 0000000..2de23f9
 +    ImGui::PopID();
 +    ty += 46 * s;
 +  }
++  {   // the block list's tab
++    ImGui::SetCursorScreenPos(ImVec2(wp.x + 12 * s, ty));
++    if (ImGui::InvisibleButton("##tab_block", ImVec2(sw - 24 * s, 40 * s))) tab = kBlockTab;
++    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
++    const float t = ease(ImGui::GetID("##tab_block_t"), tab == kBlockTab, 18.0f);
++    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
++    d->AddRectFilled(a, b, mix(hot ? IM_COL32(255, 255, 255, 12) : 0, IM_COL32(139, 92, 246, 60), t), 10 * s);
++    if (t > 0.01f) d->AddRectFilled(ImVec2(a.x, a.y + 8 * s), ImVec2(a.x + 4 * s * t, b.y - 8 * s), kPink, 2 * s);
++    d->AddText(ImVec2(a.x + 16 * s, a.y + 11 * s), tab == kBlockTab ? kInk : kMuted, "Block list");
++  }
 +
 +  // ---- cards
 +  ImGui::SetCursorScreenPos(ImVec2(wp.x + sw + 20 * s, top + 16 * s));
@@ -788,9 +938,14 @@ index 0000000..2de23f9
 +  static const int kOrder[] = {
 +      pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
 +      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
-+      pad_mods::FoxFalcoShine, pad_mods::ShineWavedash, pad_mods::ShieldShine, pad_mods::FoxLaserLoop,
++      pad_mods::FoxFalcoShine, pad_mods::Multishine, pad_mods::ShineWavedash, pad_mods::LedgeStall, pad_mods::ShieldShine, pad_mods::FoxLaserLoop,
 +      pad_mods::HumanTiming};
-+  if (tab == pad_mods::AiGroup) changed |= ai_tab();
++  if (tab == kBlockTab) {   // matchmaking reads the list whatever the mods' switches say
++    ImGui::EndDisabled();
++    block_tab();
++    ImGui::BeginDisabled(host::gameplay::vanilla_only() || !pad_mods::all_enabled());
++  }
++  else if (tab == pad_mods::AiGroup) changed |= ai_tab();
 +  else
 +    for (int m : kOrder)
 +      if (pad_mods::info(m).group == tab) changed |= card(m);
@@ -910,10 +1065,10 @@ index 06c151b..d9fd254 100644
  // True while the game is polling the online menus (mode select, the online character select screen,
 diff --git a/port/runtime/host/ai_takeover.cpp b/port/runtime/host/ai_takeover.cpp
 new file mode 100644
-index 0000000..e616fae
+index 0000000..7799ef3
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.cpp
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,309 @@
 +// Vooby Mods' AI takeover: see ai_takeover.h.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ai_takeover.h"
@@ -922,6 +1077,7 @@ index 0000000..e616fae
 +#include <atomic>
 +#include <cmath>
 +#include <cstring>
++#include <cstdlib>
 +#include <mutex>
 +
 +#include "ghost_ai.h"
@@ -953,6 +1109,9 @@ index 0000000..e616fae
 +uint8_t g_team[4] = {};  // each player's team id
 +int32_t g_match = 0;     // bumped on each Game Start: the AIs forget what came before
 +int32_t g_last_frame = -1000;
++uint32_t g_post_retrace = 0;   // the pad read when the last post-frame came
++bool g_from_snapshot = false;  // this match's AI reads the state snapshot (no replay recorded)
++int g_snap_jumps[4] = {};
 +
 +uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 +float bef(const uint8_t* p) { const uint32_t u = be32(p); float f; std::memcpy(&f, &u, 4); return f; }
@@ -1041,7 +1200,8 @@ index 0000000..e616fae
 +    ++g_match;
 +    return;
 +  }
-+  if (command != 0x38 || size < 0x50) return;
++  static const bool force_snapshot = std::getenv("MU_AI_FORCE_SNAPSHOT") != nullptr;   // tests: as in Training
++  if (command != 0x38 || size < 0x50 || force_snapshot) return;
 +  const uint8_t player = p[0x04];
 +  if (player > 3 || p[0x05]) return;   // the leader only (no Nana)
 +  Post& q = g_post[player];
@@ -1063,6 +1223,53 @@ index 0000000..e616fae
 +  q.kb_x = bef(p + 0x3C); q.kb_y = bef(p + 0x40);
 +  q.gr = bef(p + 0x44); q.hitlag = bef(p + 0x48);
 +  g_last_frame = q.frame;
++  g_post_retrace = host::retrace_count();
++  g_from_snapshot = false;
++}
++
++// The game's internal stage id -> Slippi's (the pro AI's), the inverse of internal_stage.
++int slippi_stage(int internal) {
++  switch (internal) {
++    case 0x0C: return 2; case 0x10: return 3; case 0x0A: return 8;
++    case 0x1C: return 28; case 0x24: return 31; case 0x25: return 32; default: return 0;
++  }
++}
++
++void note_snapshot(const SnapFighter (&slots)[4], int internal_stage) {
++  std::lock_guard<std::mutex> lock(g_mu);
++  const uint32_t now = host::retrace_count();
++  if (now - g_post_retrace < 4 && !g_from_snapshot) return;   // the replay's post-frames are coming: those
++  if (!g_from_snapshot) { ++g_match; host::log("ai takeover: no replay recorded here, reading the state snapshot"); }
++  g_from_snapshot = true;
++  g_stage = slippi_stage(internal_stage);
++  g_teams = false;
++  for (int s = 0; s < 4; ++s) {
++    const SnapFighter& f = slots[s];
++    Post& q = g_post[s];
++    if (!f.present) { q = Post{}; continue; }
++    const int m = f.action;
++    // Air or ground: the mods' view for a player; else from the action (jumps, falls, aerials,
++    // air dodge, the damage flights, the ledge's own states are ground-like).
++    const bool air = f.air_known ? f.airborne
++                                 : ((m >= 25 && m <= 38) || (m >= 65 && m <= 74) || m == 236 || m == 237 ||
++                                    (m >= 87 && m <= 91) || (f.vy != 0.0f && !(m >= 14 && m <= 24)));
++    if (!air) g_snap_jumps[s] = 2;
++    else if (m == 27 || m == 28) g_snap_jumps[s] = 0;   // JumpAerialF/B: the double jump is spent
++    q.have = true;
++    q.frame = (int32_t)now;
++    q.player = (uint8_t)s;
++    q.kind = (uint8_t)f.kind;
++    q.motion = (uint16_t)m;
++    q.x = f.x; q.y = f.y; q.facing = f.facing; q.percent = f.percent; q.shield = 60.0f;
++    q.stocks = (uint8_t)f.stocks; q.anim = f.anim; q.misc = 0;
++    std::memset(q.flags, 0, sizeof q.flags);
++    if (m >= 0x4B && m <= 0x5B) q.flags[3] |= 0x02;   // Damage* states: in hitstun
++    q.airborne = air;
++    q.jumps = (uint8_t)g_snap_jumps[s];
++    q.hurtbox = 0;
++    q.self_x = air ? f.vx : 0.0f; q.gr = air ? 0.0f : f.vx;
++    q.self_y = f.vy; q.kb_x = q.kb_y = 0; q.hitlag = 0;
++  }
 +}
 +
 +int pick(int kind) {
@@ -1173,10 +1380,10 @@ index 0000000..e616fae
 +}
 diff --git a/port/runtime/host/ai_takeover.h b/port/runtime/host/ai_takeover.h
 new file mode 100644
-index 0000000..7005e29
+index 0000000..a6b14ac
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,37 @@
 +// Vooby Mods' AI takeover (pad_mods.h AiTakeover): an AI plays a player's fighter by writing that
 +// controller's pad, the same way every other Vooby Mod adds presses, so the game library is the
 +// release's own and nothing inside the match changes (a library built here would desync online).
@@ -1195,6 +1402,17 @@ index 0000000..7005e29
 +
 +// Every replay event the game sends (Game Start resets, post-frames are kept per player).
 +void note_event(uint8_t command, const uint8_t* payload, uint32_t size);
++// Training and offline matches with replay saving off record no replay, so no post-frames come:
++// then the host's state snapshot stands in for them (position, speed, action, percent, facing and
++// stocks; hitstun, jumps and air or ground worked out). One per pad read, before drive().
++struct SnapFighter {
++  bool present = false, airborne = false, air_known = false;
++  int kind = 0;   // internal fighter kind (Ft_Kind)
++  int action = 0, stocks = 0;
++  float x = 0, y = 0, vx = 0, vy = 0, anim = 0, percent = 0, facing = 1;
++};
++void note_snapshot(const SnapFighter (&slots)[4], int internal_stage);
++
 +// The AI a character gets: the choice saved (pad_mods::ai_choice) when it can play, else the pro who
 +// plays that character when that pro's file loaded, else the Balanced practice CPU (0).
 +int pick(int kind);
@@ -1352,10 +1570,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..2e72f8f
+index 0000000..e971b89
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2116 @@
+@@ -0,0 +1,2256 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -1568,8 +1786,21 @@ index 0000000..2e72f8f
 +     "D-pad down never reaches the game while this is on (online that includes the chat group on it).\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party. The AI's presses travel as yours,\n"
 +     "so the other players need nothing installed; only you see the sign.", AiGroup},
++    {"padmod_multishine", "Multishine", "In a shine, press B again: jump and shine again on the ground. Tap B to multishine.",
++     "On: as Fox or Falco in a shine on the ground, every new B press is the next shine of a\n"
++     "multishine: the jump goes in, and on the very next frame (inside the jumpsquat) B with the\n"
++     "stick down, so a new shine comes out on the ground. Tap B as fast as you like: a press that\n"
++     "comes before the shine can be jumped out of waits for that moment.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
++    {"padmod_ledge_stall", "Up-B ledge stall", "Hold B while hanging on the ledge: drop and up-B back to it, again and again.",
++     "On: as Fox or Falco hanging on the ledge, hold B: the mod drops (stick down) and up-Bs at once,\n"
++     "and the up-B's startup grabs the ledge again; while you keep holding B it does it again.\n"
++     "Let go of B to stop. If one does not get back to the ledge, the up-B goes on as yours and no\n"
++     "more are started until B is let go.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
 +};
 +
++static_assert(sizeof kInfo / sizeof kInfo[0] == kCount, "one kInfo row per Mod, in enum order");
 +std::atomic<bool> g_on[kCount] = {};
 +// Per-mod button choices. Trigger 0 R, 1 L, 2 either; jump 0 X, 1 Y.
 +std::atomic<int> g_trigger[kCount] = {};
@@ -1672,6 +1903,9 @@ index 0000000..2e72f8f
 +  // the shield's trigger, still held after a B in shield: not a request to wavedash out of that shine
 +  bool lr_from_shield = false;
 +  int oos_shine_recent = 0;
++  int us_frame = -1;   // ledge up-B stall: frames into the current one (-1 none)
++  bool us_stopped = false;   // one did not get back to the ledge: no more until B is let go
++  int ms_frame = -1, ms_wait = -1, ms_cool = 0, ms_js = 3, ms_since = 1000;   // ms_since: frames since the last one   // multishine: frames since its jump; waiting for the Loop; settle time
 +  int oos_jump_wait = -1;       // their jump pressed in a shine out of shield's hop: frames held back (-1 none)
 +  int oos_jump_rel = -1;        // ...then let in on the ground: frames sent (-1 none)
 +  uint16_t oos_jump_bits = 0;   // frames left in which an air shine is the shield shine's (it lands in ~4)
@@ -1687,6 +1921,7 @@ index 0000000..2e72f8f
 +  int32_t sw_prev_motion = -1;   // last frame's motion, to see a waveland's landing begin
 +  int sw_frames = 0, sw_walk = 0;
 +  bool ld_swallow = false;
++  int cw_age = 0;   // frames the view has shown CliffWait in a row
 +  // their own ledge drop: frames since their stick went from neutral to away/down while hanging
 +  int ld_drop_age = 1000;
 +  bool ld_stick_was_neutral = true;
@@ -2002,6 +2237,116 @@ index 0000000..2e72f8f
 +// From frame delay + 1 the state shows what the X did: still a shine (the X met a Turn, or the
 +// shine moved on while it travelled) means no jump: wait for the Loop again and retry, up to
 +// kWdRetries times. Returns true while it owns the Z, so Z-always-grabs leaves that press alone.
++// ---- Fox/Falco: B in a ground shine = the next shine of a multishine (Multishine)
++// The shine's Loop is its only state that takes a jump (ftCo SpecialLwLoop IASA). The jumpsquat takes
++// only up-B (ftCo_KneeBend_IASA -> ftCo_Attack100_CheckInput, x686; lab 11-09: a B in it went on to
++// an air laser), so the shine goes on the first airborne frame, a hair off the ground, and the air
++// shine lands into a ground shine (as the shield shine's does: 24x3 365x3 366 361). So: f0 the jump
++// (B kept back, the stick at rest: in a shine a stick past 0.66 down drops through a platform), B
++// kept back through the jumpsquat, f=J..J+1 B with the stick at (0, kShineStickY), then halfway back. A fresh B in the shine's Start or Turn waits (kWdMaxWait) for the Loop. After a sequence the
++// view is a few frames behind (online delay): a B in that time waits for the new shine's Loop too.
++bool multishine(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
++                int delay) {
++  const bool fresh = (pad.button & kPadB) && !st.b_was_down;
++  if (st.ms_cool > 0) --st.ms_cool;
++  if (st.ms_since < 1000) ++st.ms_since;
++  if (st.ms_frame >= 0) {
++    const int f = st.ms_frame++, J = st.ms_js;
++    if (fresh && f >= 1) { st.ms_wait = 0; }   // the next one already: it waits for the new shine's Loop
++    if (f < J) {   // the jump, then its jumpsquat: B kept back
++      if (f == 0) o.add |= jump_bit(Multishine);
++      o.remove |= kPadB;
++      o.set_stick = true; o.sx = 0; o.sy = f == J - 1 ? (int8_t)(kShineStickY / 2) : 0;
++      return true;
++    }
++    if (f <= J + 1) {
++      o.add |= kPadB;
++      o.set_stick = true; o.sx = 0; o.sy = kShineStickY;
++      return true;
++    }
++    st.ms_frame = -1;
++    st.ms_cool = delay + 4;   // the jump and the new shine show up in the view by then
++    st.ms_since = 0;
++    halfway(o, 0, kShineStickY, pad.stick_x, pad.stick_y);
++    return true;
++  }
++  const bool ground_shine = fighter && fox_or_falco(kind) && fighter->ground_or_air == 0 &&
++                            fighter->motion_id >= kShineFirst && fighter->motion_id <= kShineLast;
++  // The last multishine's own air shine (a frame or so off the ground, landing into the ground shine)
++  // or its jumpsquat still showing: a B then is the next one too, kept until the Loop.
++  const bool own_air_shine = fighter && fox_or_falco(kind) && st.ms_since < 20 &&
++                             ((fighter->motion_id >= kAirShineFirst && fighter->motion_id <= kAirShineLast) ||
++                              fighter->motion_id == kKneeBend);
++  if (st.ms_wait >= 0) {
++    if (fresh) {}   // more presses while waiting: still the one
++    const bool loop = ground_shine && fighter->motion_id == kShineLoop && st.ms_cool == 0;
++    const bool settling = st.ms_cool > 0 || (fighter && fighter->motion_id == kKneeBend);
++    if (loop) {
++      host::log("padmods: multishine after waiting %d frames", st.ms_wait);
++      st.ms_wait = -1;
++      st.ms_frame = 0;
++      st.ms_js = std::max(3, jumpsquat_of(kind));
++      return multishine(o, st, pad, fighter, kind, delay);
++    }
++    if ((!ground_shine && !settling && !own_air_shine) || ++st.ms_wait > kWdMaxWait + delay) {   // no shine to jump out of: theirs
++      host::log("padmods: multishine B dropped (motion %d)", fighter ? (int)fighter->motion_id : -1);
++      st.ms_wait = -1;
++      return false;
++    }
++    o.remove |= kPadB;
++    return true;
++  }
++  if (!fresh || !(ground_shine || own_air_shine)) return false;
++  if (ground_shine && fighter->motion_id == kShineLoop && st.ms_cool == 0) {
++    host::log("padmods: multishine (motion %d)", (int)fighter->motion_id);
++    st.ms_frame = 0;
++    st.ms_js = std::max(3, jumpsquat_of(kind));
++    return multishine(o, st, pad, fighter, kind, delay);
++  }
++  st.ms_wait = 0;   // Start, Hit or Turn (or a Loop the view has not caught up with): wait for the Loop
++  o.remove |= kPadB;
++  return true;
++}
++
++// ---- Fox/Falco: B held on the ledge = up-B stalls (LedgeStall)
++// Lab 11-09 (Fox): from CliffWait, stick down (drop) then B with the stick straight up 2 frames
++// later: the Firefox startup (354) caught the ledge after 27 frames (29x2 354x27 252x7 253), 5 in a
++// row while B was held. Falco's startup does not catch it: he flies up, falls back and grabs it
++// about 95 frames later (354x42 356x22 358x20 35x9 252), slower but the same loop. The
++// drop needs a frame with the stick at rest in CliffWait first (see ledge_dash).
++bool ledge_stall(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
++                 int delay) {
++  const bool b = (pad.button & kPadB) != 0;
++  if (!b) { st.us_frame = -1; st.us_stopped = false; return false; }
++  const bool hanging = fighter && (fighter->motion_id == 0xFC /* CliffCatch */ || fighter->motion_id == 0xFD /* CliffWait */);
++  if (st.us_frame >= 0) {
++    const int f = st.us_frame++;
++    o.remove |= kPadB;
++    o.set_stick = true; o.sx = 0; o.sy = 0;
++    if (f == 1) o.sy = -80;                                 // the drop
++    else if (f >= 2 && f <= 4) { o.add |= kPadB; o.sy = 80; }   // the up-B, straight up
++    else if (f == 5) o.sy = 80;
++    else if (f > delay + 6 && fighter && fighter->motion_id == 0xFD /* CliffWait */) st.us_frame = -1;   // back: the next one
++    else if (f > 150 + delay) {   // never got back (Falco's flies up and falls back: ~95 frames)
++      host::log("padmods: ledge stall did not get back to the ledge (motion %d)", fighter ? (int)fighter->motion_id : -1);
++      st.us_frame = -1;
++      st.us_stopped = true;
++      return false;
++    }
++    if (f > 5 && f > delay + 6 && fighter && !hanging && fighter->motion_id != 0x162 && fighter->motion_id != kKneeBend &&
++        fighter->ground_or_air == 0) {   // landed on the stage instead: stop
++      st.us_frame = -1;
++      st.us_stopped = true;
++      return false;
++    }
++    return true;
++  }
++  if (st.us_stopped || !fighter || !fox_or_falco(kind) || fighter->motion_id != 0xFD /* CliffWait */) return false;
++  host::log("padmods: ledge stall (kind %d)", kind - 1);
++  st.us_frame = 0;
++  return ledge_stall(o, st, pad, fighter, kind, delay);
++}
++
 +bool shine_z_grab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
 +                  float facing, bool jumping, int delay) {
 +  const bool z = (pad.button & kPadZ) != 0;
@@ -2706,7 +3051,8 @@ index 0000000..2e72f8f
 +}
 +constexpr int32_t kCliffCatch = 0xFC, kCliffWait = 0xFD;
 +constexpr int kLedgeDropStick = 23;        // 0.2875 of the rim: a stick component that counts as pushed
-+constexpr int kLedgeSelfDropWindow = 12;   // a trigger this soon after their own drop is never an air dodge
++constexpr int kLedgeSelfDropWindow = 12;
++constexpr int kLedgeSettle = 2;            // CliffWait frames the view must show before a ledgedash starts   // a trigger this soon after their own drop is never an air dodge
 +//   frame 0: the C-stick down (-80): lets go of the ledge (ftCo_CliffWait_IASA -> ftCo_8009AA0C
 +//     takes the C-stick too), the control stick untouched by it; R kept back from here on;
 +//   frames 1-2: the jump (a double jump: off the ledge, in the air); the control stick centred
@@ -2719,6 +3065,7 @@ index 0000000..2e72f8f
 +  const bool r = trig_down(pad, sel);
 +  const bool r_was = trig_down(st.buttons_was_down, st.trig_l_was, st.trig_r_was, sel);
 +  auto hide_r = [&] { hide_trig(o, sel); };
++  st.cw_age = fighter && fighter->motion_id == kCliffWait ? std::min(st.cw_age + 1, 1000) : 0;
 +  if (st.ld_frame >= 0) {
 +    // Frame 0 is a neutral frame: CliffWait clears cliff.x8 on entry and sets it only on a frame
 +    // with neither stick pushed (ftCo_8009AA0C), and a drop needs it (ftCo_8009AAFC). Without it a
@@ -2842,11 +3189,16 @@ index 0000000..2e72f8f
 +      return false;
 +    }
 +    if (fighter->motion_id == kCliffCatch) { hide_r(); return true; }
++    // Not on CliffWait's first frame: after a grab out of an up-B (special fall) the drop there gave a
++    // double jump and an air dodge that never met the stage (TSC 11-09, lab: Fox 253x2 then 236x49,
++    // dead; from CliffWait's 3rd frame on, and after any ordinary grab, it lands).
++    if (st.cw_age < kLedgeSettle) { hide_r(); return true; }
 +    st.ld_wait = -1;
 +  } else {
 +    if (!r || r_was || !fighter || at <= 0) return false;
 +    if (fighter->motion_id == kCliffCatch) { st.ld_wait = 0; hide_r(); return true; }
 +    if (fighter->motion_id != kCliffWait) return false;
++    if (st.cw_age < kLedgeSettle) { st.ld_wait = 0; hide_r(); return true; }   // see above: settle first
 +  }
 +  st.ld_at = at;
 +  st.ld_drift = ledge_drift_dodge(kind) > 0;   // the drift ledgedash where measured: further in
@@ -3371,10 +3723,14 @@ index 0000000..2e72f8f
 +    if (enabled(CStickUpJump)) cstick_up_jc_smash(o, st, pad, fighter, kind, jumping); else { st.cs_frame = -1; st.cs_pend = -1; }
 +    const bool oos = (enabled(ShieldUpB) || enabled(ShieldShine)) && shield_b(o, st, pad, fighter, kind, jumping, facing);
 +    if (!enabled(ShieldUpB) && !enabled(ShieldShine)) { st.oos_frame = -1; st.oos_wait = -1; }
-+    if (oos) { st.shine_frame = -1; st.shine_wait = -1; }   // this B is the shield's
++    const bool ms = !oos && enabled(Multishine) && multishine(o, st, pad, fighter, kind, delay);
++    if (!enabled(Multishine)) { st.ms_frame = -1; st.ms_wait = -1; }
++    if (oos || ms) { st.shine_frame = -1; st.shine_wait = -1; }   // this B is the shield's, or the multishine's
 +    else if (enabled(FoxFalcoShine)) fox_falco_shine(o, st, pad, fighter, kind, jumping, delay);
 +    else { st.shine_frame = -1; st.shine_wait = -1; }
-+    if (enabled(FoxLaserLoop)) fox_laser_loop(o, st, pad, fighter, kind, facing);
++    // Not during a multishine: a B tapped in its jumpsquat armed the laser loop, which pulled the stick
++    // into the laser zone on the shine's frame (lab 11-09: the second multishine came out a laser).
++    if (enabled(FoxLaserLoop) && !ms && st.ms_frame < 0) fox_laser_loop(o, st, pad, fighter, kind, facing);
 +    else { st.lz_armed = false; st.lz_frame = -1; st.lz_jsb = -1; }
 +    const bool rjc = enabled(RunJcGrab) && run_jc_grab(o, st, pad, fighter, jumping);
 +    if (!enabled(RunJcGrab)) st.rjc_frame = -1;
@@ -3387,7 +3743,9 @@ index 0000000..2e72f8f
 +      st.grab_frame = -1; st.z_since = -1;
 +    }
 +    if (st.oos_shine_recent > 0) --st.oos_shine_recent;
-+    const bool ledge = enabled(LedgeDash) && ledge_dash(o, st, pad, fighter, kind, facing, delay);
++    const bool stall = enabled(LedgeStall) && ledge_stall(o, st, pad, fighter, kind, delay);
++    if (!enabled(LedgeStall)) { st.us_frame = -1; st.us_stopped = false; }
++    const bool ledge = !stall && enabled(LedgeDash) && ledge_dash(o, st, pad, fighter, kind, facing, delay);
 +    if (!enabled(LedgeDash)) { st.ld_frame = -1; st.ld_wait = -1; }
 +    if (enabled(ShineWavedash) && !ledge) shine_wavedash(o, st, pad, fighter, kind, delay); else st.wd_frame = -1;
 +    // Their jump in a ground shine with the stick pushed back: the stick turns the shine around first
@@ -3474,10 +3832,10 @@ index 0000000..2e72f8f
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..88fe529
+index 0000000..003519d
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,140 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -3551,6 +3909,14 @@ index 0000000..88fe529
 +  // D-pad down in an offline match: an AI plays your character until D-pad down again (the game
 +  // side, shim/mu_ai_takeover.c, drives the fighter with the AI picked for that character).
 +  AiTakeover = 14,
++  // Fox/Falco in a ground shine: a fresh B is the next shine of a multishine. The jump goes in (B
++  // kept back), and on the next frame, inside the jumpsquat, B with the stick down: a new grounded
++  // shine. A B before the shine takes a jump (its Start) waits for the Loop.
++  Multishine = 15,
++  // Fox/Falco hanging on the ledge with B held: up-B stalls, again and again while B stays held.
++  // Each one: a neutral frame, the stick down (drop), then B with the stick up (the up-B's startup
++  // catches the ledge again), then wait to be hanging again.
++  LedgeStall = 16,
 +  kCount
 +};
 +
@@ -3685,10 +4051,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..84b95f0
+index 0000000..271f80e
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1222 @@
+@@ -0,0 +1,1245 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -4591,6 +4957,29 @@ index 0000000..84b95f0
 +  // Not in a shield: B is B.
 +  fighter(3, kMarth, kWait, 0); idle();
 +  CHECK(pad4({kB}).button == kB); idle();
++
++  // ---- Multishine: B in the shine's Loop = jump, then B with the stick down inside the jumpsquat ----
++  only(pad_mods::Multishine);
++  fighter(3, kFox, kShineLoop, 0); idle(45);
++  { host::PadState p = pad4({kB}); CHECK((p.button & kX) && !(p.button & kB) && p.stick_y == 0); }   // the jump
++  state(3, 24, 0);
++  { host::PadState p = pad4({kB}); CHECK(!(p.button & kB)); }    // jumpsquat: B kept back
++  { host::PadState p = pad4({}); CHECK(!(p.button & kB)); }
++  state(3, 25, 1);
++  { host::PadState p = pad4({}); CHECK((p.button & kB) && p.stick_y == -48); }   // first airborne frame: shine
++  { host::PadState p = pad4({}); CHECK((p.button & kB) && p.stick_y == -48); }
++  pad4({}); state(3, 360, 0); idle(3);
++  // B in the shine's Start: kept back until the Loop, then the same.
++  pad4({}); { host::PadState p = pad4({kB}); CHECK(!(p.button & (kB | kX))); }
++  { host::PadState p = pad4({kB}); CHECK(!(p.button & (kB | kX))); }
++  state(3, kShineLoop, 0);
++  { host::PadState p = pad4({kB}); CHECK((p.button & kX) && !(p.button & kB)); }
++  state(3, 24, 0); pad4({}); pad4({});
++  { host::PadState p = pad4({}); CHECK((p.button & kB) && p.stick_y == -48); }
++  idle(45);
++  // Not Fox or Falco, or not in a shine: B is theirs.
++  fighter(3, kMarth, kShineLoop, 0); CHECK(pad4({kB}).button == kB); idle();
++  fighter(3, kFox, kWait, 0); CHECK(pad4({kB}).button == kB); idle(45);
 +
 +  // ---- Ledgedash: a light analog R on the ledge never reaches the game (no roll); a full press goes ----
 +  only(pad_mods::LedgeDash);
