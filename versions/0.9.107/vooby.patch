@@ -227,7 +227,7 @@ index 8b1b559..18c87d5 100644
  
  #endif
 diff --git a/port/runtime/gx/pc_settings.cpp b/port/runtime/gx/pc_settings.cpp
-index 871cf2c..f769731 100644
+index 871cf2c..62d5ba9 100644
 --- a/port/runtime/gx/pc_settings.cpp
 +++ b/port/runtime/gx/pc_settings.cpp
 @@ -52,6 +52,10 @@
@@ -241,7 +241,7 @@ index 871cf2c..f769731 100644
  #include "../abi/mu_lcancel_flash.h"
  #include "user_gecko.h"
  
-@@ -455,6 +459,48 @@ static void draw_community_code_overlays() {
+@@ -455,6 +459,50 @@ static void draw_community_code_overlays() {
    draw->PopClipRect();
  }
  
@@ -262,9 +262,11 @@ index 871cf2c..f769731 100644
 +    for (int slot = 0; slot < 2; ++slot)
 +      host::log("ai label: slot %d present %d tag %.1f,%.1f visible %d", slot, (int)g_hud_players[slot].present,
 +                g_hud_players[slot].tag_x, g_hud_players[slot].tag_y, (int)g_hud_players[slot].tag_visible);
++  // Offline the HUD slot is the controller; online the AI plays the local player, wherever it is.
++  const int me = slippi::online::is_online_match() ? slippi::online::local_player_index() : -1;
 +  for (int slot = 0; slot < 4; ++slot) {
 +    const HudPlayerSnapshot& p = g_hud_players[slot];
-+    if (!pad_mods::ai_active(slot) || !p.present) continue;
++    if (!(me >= 0 ? slot == me : pad_mods::ai_active(slot)) || !p.present) continue;
 +    if (!std::isfinite(p.tag_x) || !std::isfinite(p.tag_y) || p.tag_y <= 0.0f) continue;
 +    const float x640 = true_widescreen_active() ? 320.0f + (p.tag_x - 320.0f) * true_widescreen_factor() : p.tag_x;
 +    const float cx = bounds.left + x640 / 640.0f * width;
@@ -290,7 +292,7 @@ index 871cf2c..f769731 100644
  static void draw_player_nicknames() {
    if (!g_hud_match) return;
    const OverlayBounds bounds = overlay_bounds();
-@@ -733,7 +779,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
+@@ -733,7 +781,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
  // while the settings panel is open, which is when the overlay may be dragged and resized.
  static void draw_input_overlay(int port, int row, bool lone, bool editable, bool borderless, bool values, int knob) {
    host::PadState pads[4]{};
@@ -299,7 +301,7 @@ index 871cf2c..f769731 100644
    int slot = port < 0 || port > 3 ? 0 : port;
    // An adapter socket the player is not using reports nothing, and the overlay then drew an empty
    // controller with no hint why. With a single port selected, show the first one that has a device
-@@ -2371,6 +2417,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
+@@ -2371,6 +2419,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
        else if (key == "lcancel_flash_mode") saved_lcancel_flash = std::clamp(std::stoi(value), 0, 6);
        else if (key == "lcancel_success_flash") saved_lcancel_success = std::clamp(std::stoi(value), 0, 2);
        else if (key == "autolcancel") lcancel::set_automatic(value == "1");
@@ -321,7 +323,7 @@ index 871cf2c..f769731 100644
        else if (key == "palstockicons") gecko::option_pal_stock_icons = value == "1";
        else if (key == "noscreenshake") gecko::option_no_screen_shake = value == "1";
        else if (key == "screenshake") gecko::option_screen_shake_percent = std::clamp(std::stoi(value), 0, 200);
-@@ -2775,6 +2836,7 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
+@@ -2775,6 +2838,7 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
  
  #include "ui_sources/gd_melee/text.inl"
  #include "pc_settings_visuals.inl"
@@ -329,7 +331,7 @@ index 871cf2c..f769731 100644
  
  // A change that applies at the next start (a mod look, an audio driver, a graphics backend): a button
  // that saves the settings and restarts the game, instead of the player closing and reopening it. The
-@@ -4415,7 +4477,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
+@@ -4415,7 +4479,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
         << "\nlcancel_flash_mode " << mu_lcancel_flash_mode(options.te_options2, lcancel::flash_mode())
         << "\nlcancel_success_flash " << mu_lcancel_success_color(options.te_options2)
         << "\nlcancelindicator " << (lcancel::indicator_enabled() ? 1 : 0)
@@ -355,7 +357,7 @@ index 871cf2c..f769731 100644
         << "\npalstockicons " << (gecko::option_pal_stock_icons ? 1 : 0)
         << "\nnoscreenshake " << (gecko::option_no_screen_shake ? 1 : 0)
         << "\nscreenshake " << gecko::option_screen_shake_percent
-@@ -5067,6 +5146,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5067,6 +5148,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      else if (const char* tab = host::test_env::getenv("MELEE_TEST_SETTINGS_TAB"))
        state.active_tab = std::clamp(std::atoi(tab), 0, 7);
      if (test_menu_style() >= 0) options.overlay_style = test_menu_style();
@@ -364,7 +366,7 @@ index 871cf2c..f769731 100644
    }
    const auto reset_settings_home = [&state](const char* why) {
      if (g_ui_diag) host::log("ui diag: settings reset to home (%s), tab %d", why, state.active_tab);
-@@ -9273,7 +9354,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9273,7 +9356,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        ImGui::EndDisabled();
        if (ranked) settings_hint(lcancel::policy::ranked_hint);
        if (host::gameplay::vanilla_only()) settings_hint("Disabled for this vanilla-only session.");
@@ -374,7 +376,7 @@ index 871cf2c..f769731 100644
  #ifdef MELEE_NO_SLIPPI   // this build's matches are all the one kind, where it works
        settings_hint("(NOTE: Works offline and in online matches)");
        if (automatic) {
-@@ -9292,6 +9374,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9292,6 +9376,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        }
      }
  
@@ -391,7 +393,7 @@ index 871cf2c..f769731 100644
      // ---- HUD ----
      // A port code compiled into the game (recomp/gecko.py PORT_CODES): the stock row drawn at PAL's
      // size and height. Display only, read when the HUD is built, so it applies from the next match.
-@@ -10823,7 +10915,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -10823,7 +10917,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
    if (!state.fill_window && !state.open && !state.menu_open && options.show_player_nicknames)
      draw_player_nicknames();
    if (!state.fill_window && !state.open && !state.menu_open) draw_combo_counter();
@@ -908,10 +910,10 @@ index 06c151b..d9fd254 100644
  // True while the game is polling the online menus (mode select, the online character select screen,
 diff --git a/port/runtime/host/ai_takeover.cpp b/port/runtime/host/ai_takeover.cpp
 new file mode 100644
-index 0000000..73b2665
+index 0000000..e616fae
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.cpp
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,257 @@
 +// Vooby Mods' AI takeover: see ai_takeover.h.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ai_takeover.h"
@@ -926,6 +928,7 @@ index 0000000..73b2665
 +#include "../abi/mu_ghost_ai.h"
 +#include "../abi/mu_practice_cpu.h"
 +#include "pad_mods.h"
++#include "slippi_online.h"
 +#include "practice_ghosts.h"
 +
 +namespace ai_takeover {
@@ -946,6 +949,8 @@ index 0000000..73b2665
 +std::mutex g_mu;
 +Post g_post[4];          // the leader of each player slot (Nana is left out)
 +int g_stage = 0;         // Slippi stage id from Game Start (31 Battlefield, 32 Final Destination ...)
++bool g_teams = false;    // a teams match: the AI plays against the other team only
++uint8_t g_team[4] = {};  // each player's team id
 +int32_t g_match = 0;     // bumped on each Game Start: the AIs forget what came before
 +int32_t g_last_frame = -1000;
 +
@@ -1027,6 +1032,12 @@ index 0000000..73b2665
 +  if (command == 0x36) {   // Game Start: a new match
 +    for (auto& q : g_post) q = Post{};
 +    g_stage = size > 0x14 ? (int)((p[0x12] << 8) | p[0x13]) : 0;
++    // Game Start payload: 0x0C is teams, each player's block at 0x64 + 0x24 * i, team id at +0x09.
++    g_teams = size > 0x0C && p[0x0C] != 0;
++    for (int i = 0; i < 4; ++i) g_team[i] = size > (uint32_t)(0x6D + 0x24 * i) ? p[0x6D + 0x24 * i] : (uint8_t)i;
++    if (pad_mods::enabled(pad_mods::AiTakeover))
++      host::log("ai takeover: match on stage %d, %s (teams %d %d %d %d, characters %d %d)", g_stage, g_teams ? "teams" : "no teams",
++                g_team[0], g_team[1], g_team[2], g_team[3], size > 0x88 ? p[0x64] : -1, size > 0x88 ? p[0x88] : -1);
 +    ++g_match;
 +    return;
 +  }
@@ -1064,16 +1075,19 @@ index 0000000..73b2665
 +}
 +
 +bool drive(int port, host::PadState& out) {
-+  // Offline the player slot is the controller port (pad_mods' view files fighters the same way).
++  // Offline the player slot is the controller port (pad_mods' view files fighters the same way);
++  // online the local player is the match's local player index, whatever controller it is on.
++  const int slot = slippi::online::session_mode() >= 0 ? slippi::online::local_player_index() : port;
 +  Post self, opp;
 +  int stage, match;
 +  {
 +    std::lock_guard<std::mutex> lock(g_mu);
-+    if (port < 0 || port > 3 || !g_post[port].have) return false;
-+    self = g_post[port];
++    if (port < 0 || port > 3 || slot < 0 || slot > 3 || !g_post[slot].have) return false;
++    self = g_post[slot];
 +    float best = 1e30f;
-+    for (int k = 0; k < 4; ++k) {   // against the nearest other fighter
-+      if (k == port || !g_post[k].have || g_post[k].frame != self.frame) continue;
++    for (int k = 0; k < 4; ++k) {   // against the nearest fighter of another team
++      if (k == slot || !g_post[k].have || g_post[k].frame != self.frame) continue;
++      if (g_teams && g_team[k] == g_team[slot]) continue;
 +      const float dx = g_post[k].x - self.x, dy = g_post[k].y - self.y;
 +      if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; opp = g_post[k]; }
 +    }
@@ -1338,10 +1352,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..e0410c1
+index 0000000..2e72f8f
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2109 @@
+@@ -0,0 +1,2116 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -1551,7 +1565,9 @@ index 0000000..e0410c1
 +     "frame on; D-pad down again and you play again, on the same frame. An \"AI\" sign floats over\n"
 +     "your character meanwhile. The AI for each character is picked below: the pro AI who plays it\n"
 +     "(Mang0's Falco, Zain's Marth, Cody's Fox, aMSa's Yoshi) or one of the practice CPU styles.\n"
-+     "D-pad down never reaches the game while this is on. Offline only (never online).", AiGroup},
++     "D-pad down never reaches the game while this is on (online that includes the chat group on it).\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party. The AI's presses travel as yours,\n"
++     "so the other players need nothing installed; only you see the sign.", AiGroup},
 +};
 +
 +std::atomic<bool> g_on[kCount] = {};
@@ -3232,19 +3248,24 @@ index 0000000..e0410c1
 +  const uint32_t retrace = host::retrace_count();
 +  const bool repeat = retrace == g_ai_retrace;   // a second PADRead in one retrace: same answer
 +  g_ai_retrace = retrace;
-+  const bool ok = enabled(AiTakeover) && all_enabled() && !host::gameplay::vanilla_only() &&
-+                  slippi::online::session_mode() < 0;
++  // The same modes as every Vooby Mod: offline, Direct and Teams (the AI only presses this
++  // controller's buttons, so it travels online like any input and cannot desync).
++  const bool online = slippi::online::session_mode() >= 0;
++  const bool ok = enabled(AiTakeover) && allowed_now() && all_enabled();
 +  MuLcancelView view{};
 +  if (ok && !repeat) lcancel::observe(&view);
 +  for (int p = 0; p < 4; ++p) {
 +    const bool dd = pads[p].err == 0 && (pads[p].button & kPadDDown);
 +    if (!ok) { g_ai_on[p].store(false); g_ai_dd_was[p] = dd; continue; }
 +    if (!repeat) {
-+      if (!view.port[p].present) g_ai_on[p].store(false);
++      // Online the view holds the one local fighter, filed wherever the library put it.
++      bool present = view.port[p].present != 0;
++      if (online) { present = false; for (const auto& f : view.port) present |= f.present != 0; present &= pads[p].err == 0; }
++      if (!present) g_ai_on[p].store(false);
 +      else if (dd && !g_ai_dd_was[p]) {
 +        g_ai_on[p].store(!g_ai_on[p].load());
-+        host::log("padmods: AI takeover %s on controller %d (kind %d)", g_ai_on[p].load() ? "on" : "off", p + 1,
-+                  (int)view.fighter_kind[p] - 1);
++        host::log("padmods: AI takeover %s on controller %d (%s)", g_ai_on[p].load() ? "on" : "off", p + 1,
++                  online ? "online" : "offline");
 +      }
 +      g_ai_dd_was[p] = dd;
 +    }
