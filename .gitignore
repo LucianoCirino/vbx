@@ -1,0 +1,5 @@
+dist/
+work/
+*.iso
+work/
+tools/local.env
