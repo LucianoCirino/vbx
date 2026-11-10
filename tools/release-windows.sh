@@ -62,7 +62,7 @@ diff <(imp "$WORK/official/MeleeUnlocked-$VER/melee_source.exe") <(imp "$O/melee
 python3 -I -c "import re,sys; t=open(sys.argv[1],'rb').read().decode('latin1'); sys.exit(0 if re.findall(r'(?<=\x00)0\.\d+\.\d+(?=\x00)',t)[:1]==[sys.argv[2]] and 'padmod_cstick_up_jump' in t else 1)" "$O/melee_source.exe" "$VER" \
   || die "not version $VER, or the mods are missing"
 echo "$VER" > "$O/VERSION"; echo "$TAG" > "$O/TAG"
-cp "$ROOT/install/install.ps1" "$ROOT/install/install.bat" "$ROOT/install/uninstall.bat" "$ROOT/install/update.ps1" "$ROOT/install/MODS.md" "$O/"
+cp "$ROOT/install/install.ps1" "$ROOT/install/install.bat" "$ROOT/install/uninstall.bat" "$ROOT/install/MODS.md" "$O/"
 (cd "$O" && sha256sum melee_source.exe > SHA256SUMS)
 (cd "$ROOT/dist" && rm -f "$N.zip" && zip -qr "$N.zip" "$N")
 say "Done: dist/$N.zip ($TAG)"

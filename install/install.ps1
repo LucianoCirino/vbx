@@ -5,16 +5,17 @@
 # Run it from the unzipped release folder (next to melee_source.exe, VERSION, TAG and SHA256SUMS).
 # It only replaces the game program; settings, replays and the disc are not touched. The original
 # program is kept as melee_source.release-<version>.exe beside it. Close the game first.
-# It also sets up the background updater (update.ps1, every 15 minutes, this user only), which
-# installs new builds by itself, also after the game updates. -NoAutoUpdate leaves it out.
-param([string]$Game = "", [switch]$Uninstall, [switch]$NoPause, [switch]$Quiet, [switch]$NoAutoUpdate)
+# To update, run it again: it looks online for the newest build for the installed game version
+# (also after the game updated itself) and installs that instead. -Offline skips the check.
+param([string]$Game = "", [switch]$Uninstall, [switch]$NoPause, [switch]$Quiet, [switch]$Offline)
 if ($Quiet) { $NoPause = $true }
 function Wait-Close { if (-not $NoPause) { Read-Host "Press Enter to close" | Out-Null } }
 function Say($m, $c = "Gray") { if (-not $Quiet) { Write-Host $m -ForegroundColor $c } }
 $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Home_ = Join-Path $env:LOCALAPPDATA "vbx"
-$Task = "vbx-update"
+$Task = "vbx-update"   # builds 1-2 set up a background task; removed on any install
+$Repo = "LucianoCirino/vbx"
 
 function Stop-Install($msg) { Write-Host "`nSTOPPED: $msg`nNothing was changed." -ForegroundColor Red; Wait-Close; exit 1 }
 function Get-GameVersion($file) {
@@ -42,14 +43,16 @@ if (Get-Process melee_source -ErrorAction SilentlyContinue) { Stop-Install "the 
 $Installed = Get-GameVersion $Exe
 if (-not $Installed) { Stop-Install "could not read the game's version" }
 
+Unregister-ScheduledTask -TaskName $Task -Confirm:$false -ErrorAction SilentlyContinue
+Remove-Item "$Home_\update.ps1", "$Home_\update.log", "$Home_\installed.txt" -ErrorAction SilentlyContinue
+
 if ($Uninstall) {
-  Unregister-ScheduledTask -TaskName $Task -Confirm:$false -ErrorAction SilentlyContinue
   Remove-Item -Recurse -Force $Home_ -ErrorAction SilentlyContinue
   $Bak = Join-Path $Game "melee_source.release-$Installed.exe"
-  if (-not (Test-Modded $Exe)) { Say "The game program is already the original ($Installed). Auto update removed."; Wait-Close; exit 0 }
+  if (-not (Test-Modded $Exe)) { Say "The game program is already the original ($Installed)."; Wait-Close; exit 0 }
   if (-not (Test-Path $Bak)) { Stop-Install "no backup $Bak (update the game in its launcher instead: that puts the original back)" }
   Copy-Item $Bak $Exe -Force
-  Say "Original $Installed program back, auto update removed. Start the game again." Green
+  Say "Original $Installed program back. Start the game again." Green
   Wait-Close; exit 0
 }
 
@@ -57,6 +60,36 @@ $New = Join-Path $Here "melee_source.exe"
 if (-not (Test-Path $New) -or -not (Test-Path "$Here\VERSION")) { Stop-Install "run this from the unzipped release folder" }
 $ModVer = (Get-Content "$Here\VERSION" -Raw).Trim()
 $Tag = if (Test-Path "$Here\TAG") { (Get-Content "$Here\TAG" -Raw).Trim() } else { "v$ModVer" }
+
+# A newer build online for this game version (or any build, when this zip is for another version):
+# download it and let its own installer do the rest.
+if (-not $Offline) {
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $rels = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=40" -Headers @{ "User-Agent" = "vbx-installer" } -TimeoutSec 20
+    $rel = $rels | Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -like "v$Installed-*" } |
+           Where-Object { $_.assets | Where-Object { $_.name -like "*-windows.zip" } } | Select-Object -First 1
+    $build = { param($t) if ($t -match '-(\d+)$') { [int]$Matches[1] } else { 0 } }
+    if ($rel -and ($ModVer -ne $Installed -or (& $build $rel.tag_name) -gt (& $build $Tag))) {
+      Say "Newer build online: $($rel.tag_name). Downloading..." Cyan
+      $asset = $rel.assets | Where-Object { $_.name -like "*-windows.zip" } | Select-Object -First 1
+      $tmp = Join-Path $env:TEMP ("vbx-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+      New-Item -ItemType Directory -Path $tmp | Out-Null
+      try {
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$tmp\b.zip" -UseBasicParsing -Headers @{ "User-Agent" = "vbx-installer" } -TimeoutSec 300
+        Expand-Archive -Path "$tmp\b.zip" -DestinationPath $tmp -Force
+        $inst = Get-ChildItem -Path $tmp -Recurse -Filter install.ps1 | Select-Object -First 1
+        $args2 = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $inst.FullName, "-Game", $Game, "-Offline", "-NoPause")
+        if ($Quiet) { $args2 += "-Quiet" }
+        & powershell @args2
+        $code = $LASTEXITCODE
+      } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+      Wait-Close; exit $code
+    }
+  } catch {
+    Say "Could not check for a newer build ($($_.Exception.Message)); installing this one." Yellow
+  }
+}
 if ($Installed -ne $ModVer) {
   Stop-Install "your game is $Installed, this build is for $ModVer.`nUpdate the game in its launcher (or wait for a build for $Installed). Playing online needs everyone on the same game version."
 }
@@ -71,22 +104,7 @@ Move-Item "$Exe.tmp" $Exe -Force
 
 New-Item -ItemType Directory -Force -Path $Home_ | Out-Null
 Set-Content -Path "$Home_\game.txt" -Value $Game
-Set-Content -Path "$Home_\installed.txt" -Value "$Tag $have"
-$auto = $false
-if (-not $NoAutoUpdate -and (Test-Path "$Here\update.ps1")) {
-  Copy-Item "$Here\update.ps1" "$Home_\update.ps1" -Force
-  try {
-    $ps = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Home_\update.ps1`""
-    $action = New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless $ps"
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 15)
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
-    Register-ScheduledTask -TaskName $Task -Action $action -Trigger $trigger -Settings $settings -Description "Keeps the game's control mods up to date" -Force | Out-Null
-    $auto = $true
-  } catch {
-    Say "Auto update could not be set up ($($_.Exception.Message)); install new builds by hand." Yellow
-  }
-}
 Say "`nInstalled $Tag on game $Installed. Start the game, then F1 > Game > Vooby Mods." Green
-if ($auto) { Say "Auto update is on: new builds install by themselves (every 15 minutes, never while the game is open)." }
+Say "To update later (also after the game updates itself), run install.bat again."
 Wait-Close
 exit 0

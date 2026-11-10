@@ -69,7 +69,7 @@ rm -f "$GAME/melee_source.vooby-test"
 
 say "Package"
 echo "$VER" > "$OUT/VERSION"; echo "$TAG" > "$OUT/TAG"
-cp "$ROOT/install/install.sh" "$ROOT/install/update.sh" "$ROOT/install/MODS.md" "$OUT/"
+cp "$ROOT/install/install.sh" "$ROOT/install/MODS.md" "$OUT/"
 (cd "$OUT" && sha256sum melee_source > SHA256SUMS)
 (cd "$ROOT/dist" && rm -f "vbx-$VER-linux.zip" && zip -qr "vbx-$VER-linux.zip" "vbx-$VER-linux")
 say "Done: dist/vbx-$VER-linux.zip ($TAG)"

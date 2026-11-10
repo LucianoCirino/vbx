@@ -2,22 +2,22 @@
 # Installer (Linux).
 #
 #   bash install.sh [game folder]                 install
-#   bash install.sh [game folder] --uninstall     put the original program back, auto update off
-#   bash install.sh [game folder] --no-auto-update
+#   bash install.sh [game folder] --uninstall     put the original program back
+#   bash install.sh [game folder] --offline       no online check for a newer build
 #
 # Run it from the unzipped release folder (it sits next to melee_source, VERSION and SHA256SUMS).
 # It only replaces the game program; your settings, replays and disc are not touched. The original
-# program is kept as melee_source.release-<version> beside it. It also turns on the background
-# updater (update.sh from a systemd user timer every 15 minutes), which installs new builds itself.
+# program is kept as melee_source.release-<version> beside it. To update, run it again: it installs
+# the newest build online for the installed game version (also after the game updated itself).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-GAME=""; UNINSTALL=0; QUIET=0; AUTO=1
+GAME=""; UNINSTALL=0; QUIET=0; OFFLINE=0
 for a in "$@"; do
   case "$a" in
     --uninstall) UNINSTALL=1 ;;
     --quiet) QUIET=1 ;;
-    --no-auto-update) AUTO=0 ;;
+    --offline) OFFLINE=1 ;;
     *) GAME=$a ;;
   esac
 done
@@ -44,21 +44,54 @@ GAME=${GAME%/}
 INSTALLED=$(version_of "$GAME/melee_source")
 [ -n "$INSTALLED" ] || die "could not read the game's version"
 
-if [ "$UNINSTALL" = 1 ]; then
+# builds 1-2 set up a background timer: gone with any run
+if [ -f "$UNITS/vbx-update.timer" ]; then
   systemctl --user disable --now vbx-update.timer >/dev/null 2>&1 || true
-  rm -f "$UNITS/vbx-update.timer" "$UNITS/vbx-update.service"; rm -rf "$HOME_"
+  rm -f "$UNITS/vbx-update.timer" "$UNITS/vbx-update.service" "$HOME_/update.sh" "$HOME_/update.log"
+fi
+rm -f "$HOME_/installed.txt"
+
+if [ "$UNINSTALL" = 1 ]; then
+  rm -rf "$HOME_"
   BAK="$GAME/melee_source.release-$INSTALLED"
-  is_modded "$GAME/melee_source" || { echo "The game program is already the original ($INSTALLED). Auto update off."; exit 0; }
+  is_modded "$GAME/melee_source" || { echo "The game program is already the original ($INSTALLED)."; exit 0; }
   [ -f "$BAK" ] || die "no backup $BAK (update the game in its launcher instead: that puts the original back)"
   cp "$BAK" "$GAME/melee_source.tmp" && mv "$GAME/melee_source.tmp" "$GAME/melee_source"
   [ -f "$GAME/melee_game.snapexcl.release-$INSTALLED" ] && cp "$GAME/melee_game.snapexcl.release-$INSTALLED" "$GAME/melee_game.snapexcl"
-  echo "Original $INSTALLED program back, auto update off. Restart the game."
+  echo "Original $INSTALLED program back. Restart the game."
   exit 0
 fi
 
 [ -f "$HERE/melee_source" ] && [ -f "$HERE/VERSION" ] || die "run this from the unzipped release folder"
 MODVER=$(cat "$HERE/VERSION")
 TAG=$(cat "$HERE/TAG" 2>/dev/null || echo "v$MODVER")
+
+# A newer build online for this game version (or any, when this zip is for another version):
+# download it and let its own installer do the rest.
+if [ $OFFLINE = 0 ] && command -v curl >/dev/null && command -v python3 >/dev/null; then
+  if JSON=$(curl -fsSL --max-time 20 -H 'User-Agent: vbx-installer' "https://api.github.com/repos/LucianoCirino/vbx/releases?per_page=40"); then
+    read -r RTAG RURL < <(printf '%s' "$JSON" | python3 -I -c '
+import json, sys
+ver = sys.argv[1]
+for r in json.load(sys.stdin):
+    if r["draft"] or r["prerelease"] or not r["tag_name"].startswith("v" + ver + "-"): continue
+    for a in r["assets"]:
+        if a["name"].endswith("-linux.zip"):
+            print(r["tag_name"], a["browser_download_url"]); sys.exit()
+' "$INSTALLED") || true
+    num() { case "$1" in *-[0-9]*) echo "${1##*-}" ;; *) echo 0 ;; esac; }
+    if [ -n "${RTAG:-}" ] && { [ "$MODVER" != "$INSTALLED" ] || [ "$(num "$RTAG")" -gt "$(num "$TAG")" ]; }; then
+      say "Newer build online: $RTAG. Downloading..."
+      TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+      curl -fsSL --max-time 300 -H 'User-Agent: vbx-installer' -o "$TMP/b.zip" "$RURL" && (cd "$TMP" && unzip -q b.zip) \
+        || die "the download failed"
+      ARGS=("$GAME" --offline); [ $QUIET = 1 ] && ARGS+=(--quiet)
+      bash "$(find "$TMP" -name install.sh | head -1)" "${ARGS[@]}"; exit $?
+    fi
+  else
+    say "Could not check for a newer build; installing this one."
+  fi
+fi
 [ "$INSTALLED" = "$MODVER" ] || die "your game is $INSTALLED, this build is for $MODVER.
 Update the game in its launcher (or wait for a build for $INSTALLED). Playing online
 needs everyone on the same game version."
@@ -86,16 +119,7 @@ mv "$GAME/melee_source.tmp" "$GAME/melee_source"
 
 mkdir -p "$HOME_"
 echo "$GAME" > "$HOME_/game.txt"
-echo "$TAG $(sha256sum "$GAME/melee_source" | cut -d' ' -f1)" > "$HOME_/installed.txt"
-AUTO_ON=0
-if [ $AUTO = 1 ] && [ -f "$HERE/update.sh" ] && command -v systemctl >/dev/null 2>&1; then
-  cp "$HERE/update.sh" "$HOME_/update.sh"
-  mkdir -p "$UNITS"
-  printf '[Unit]\nDescription=Keeps the game control mods up to date\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/env bash %s/update.sh\n' "$HOME_" > "$UNITS/vbx-update.service"
-  printf '[Unit]\nDescription=Check for new game control mod builds\n\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=15min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > "$UNITS/vbx-update.timer"
-  systemctl --user daemon-reload >/dev/null 2>&1 && systemctl --user enable --now vbx-update.timer >/dev/null 2>&1 && AUTO_ON=1
-fi
 say
 say "Installed $TAG on game $INSTALLED. Restart the game, then F1 > Game > Vooby Mods."
-[ $AUTO_ON = 1 ] && say "Auto update is on: new builds install by themselves (every 15 minutes, never while the game is open)."
+say "To update later (also after the game updates itself), run install.sh again."
 exit 0
