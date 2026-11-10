@@ -216,7 +216,7 @@ index 8b1b559..18c87d5 100644
  
  #endif
 diff --git a/port/runtime/gx/pc_settings.cpp b/port/runtime/gx/pc_settings.cpp
-index 871cf2c..d97de97 100644
+index 871cf2c..07fc296 100644
 --- a/port/runtime/gx/pc_settings.cpp
 +++ b/port/runtime/gx/pc_settings.cpp
 @@ -52,6 +52,7 @@
@@ -254,7 +254,15 @@ index 871cf2c..d97de97 100644
        else if (key == "palstockicons") gecko::option_pal_stock_icons = value == "1";
        else if (key == "noscreenshake") gecko::option_no_screen_shake = value == "1";
        else if (key == "screenshake") gecko::option_screen_shake_percent = std::clamp(std::stoi(value), 0, 200);
-@@ -4415,7 +4427,22 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
+@@ -2775,6 +2787,7 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
+ 
+ #include "ui_sources/gd_melee/text.inl"
+ #include "pc_settings_visuals.inl"
++#include "vooby_ui.inl"
+ 
+ // A change that applies at the next start (a mod look, an audio driver, a graphics backend): a button
+ // that saves the settings and restarts the game, instead of the player closing and reopening it. The
+@@ -4415,7 +4428,22 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
         << "\nlcancel_flash_mode " << mu_lcancel_flash_mode(options.te_options2, lcancel::flash_mode())
         << "\nlcancel_success_flash " << mu_lcancel_success_color(options.te_options2)
         << "\nlcancelindicator " << (lcancel::indicator_enabled() ? 1 : 0)
@@ -278,7 +286,16 @@ index 871cf2c..d97de97 100644
         << "\npalstockicons " << (gecko::option_pal_stock_icons ? 1 : 0)
         << "\nnoscreenshake " << (gecko::option_no_screen_shake ? 1 : 0)
         << "\nscreenshake " << gecko::option_screen_shake_percent
-@@ -9273,7 +9300,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5067,6 +5095,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+     else if (const char* tab = host::test_env::getenv("MELEE_TEST_SETTINGS_TAB"))
+       state.active_tab = std::clamp(std::atoi(tab), 0, 7);
+     if (test_menu_style() >= 0) options.overlay_style = test_menu_style();
++    if (std::getenv("MU_VOOBY_UI_OPEN"))   // test hook (the Vooby Mods window): straight onto the tab's page
++      state.clean_detail_open = state.dashboard_detail_open = state.gd_detail_open = state.radial_detail_open = state.wide_detail_open = true;
+   }
+   const auto reset_settings_home = [&state](const char* why) {
+     if (g_ui_diag) host::log("ui diag: settings reset to home (%s), tab %d", why, state.active_tab);
+@@ -9273,7 +9303,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        ImGui::EndDisabled();
        if (ranked) settings_hint(lcancel::policy::ranked_hint);
        if (host::gameplay::vanilla_only()) settings_hint("Disabled for this vanilla-only session.");
@@ -288,7 +305,7 @@ index 871cf2c..d97de97 100644
  #ifdef MELEE_NO_SLIPPI   // this build's matches are all the one kind, where it works
        settings_hint("(NOTE: Works offline and in online matches)");
        if (automatic) {
-@@ -9292,6 +9320,70 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9292,6 +9323,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        }
      }
  
@@ -296,69 +313,376 @@ index 871cf2c..d97de97 100644
 +    // A heading per group, each mod a switch with a one-line summary (the full explanation is its
 +    // tooltip) and, while it is on, its own settings indented under it.
 +    if (ImGui::CollapsingHeader("Vooby Mods##voobymods", ImGuiTreeNodeFlags_DefaultOpen)) {
-+      {
-+        bool all = pad_mods::all_enabled();
-+        if (settings_toggle("Use Vooby Mods", &all)) { pad_mods::set_all_enabled(all); changed = true; }
-+        if (ImGui::IsItemHovered())
-+          ImGui::SetTooltip("One switch for every mod below. Off: none of them does anything; each one's own switch and\n"
-+                            "settings are kept for when you turn this back on.");
-+      }
-+      settings_hint("Input assists that press buttons for you, as your own presses (replays and the input display show them). Offline, Direct and Teams.");
-+      if (pad_mods::all_enabled() && pad_mods::any_enabled() && !pad_mods::allowed_now())
-+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "Paused in this mode: Vooby Mods work offline, in Direct and in Teams.");
-+      ImGui::BeginDisabled(host::gameplay::vanilla_only() || !pad_mods::all_enabled());
-+      // Display order: movement, attacks and grabs, shield, the rest.
-+      static const int kOrder[] = {
-+          pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
-+          pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
-+          pad_mods::FoxFalcoShine, pad_mods::ShineWavedash, pad_mods::ShieldShine, pad_mods::FoxLaserLoop,
-+          pad_mods::HumanTiming};
-+      for (int g = 0; g < pad_mods::kGroupCount; ++g) {
-+        bool heading = false;
-+        for (int m : kOrder) {
-+          const pad_mods::Info& in = pad_mods::info(m);
-+          if (in.group != g) continue;
-+          if (!heading) { ImGui::Spacing(); ImGui::SeparatorText(pad_mods::group_name(g)); heading = true; }
-+          ImGui::PushID(m);
-+          bool on = pad_mods::enabled(m);
-+          if (settings_toggle(in.label, &on)) { pad_mods::set_enabled(m, on); changed = true; }
-+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", in.help);
-+          settings_hint("%s", in.summary);
-+          if (on && (pad_mods::has_trigger_choice(m) || pad_mods::has_jump_choice(m) || pad_mods::sub_option_label(m))) {
-+            ImGui::Indent(18.0f);
-+            if (pad_mods::has_trigger_choice(m)) {
-+              static const char* triggers[] = {"R", "L", "R or L"};
-+              int c = pad_mods::trigger_choice(m);
-+              if (settings_combo("Button", &c, triggers, 3)) { pad_mods::set_trigger_choice(m, c); changed = true; }
-+              if (ImGui::IsItemHovered())
-+                ImGui::SetTooltip("The shoulder button this mod uses. With the one-button wavedash it no longer\n"
-+                                  "shields on the ground, so shield with the other one.");
-+            }
-+            if (pad_mods::has_jump_choice(m)) {
-+              static const char* jumps[] = {"X", "Y"};
-+              int c = pad_mods::jump_choice(m);
-+              if (settings_combo("Jump button", &c, jumps, 2)) {
-+                pad_mods::set_jump_choice(m, c); changed = true;
-+              }
-+              if (ImGui::IsItemHovered())
-+                ImGui::SetTooltip("The jump button this mod presses for you; the game treats X and Y the same,\n"
-+                                  "this is what the input display and replays show.");
-+            }
-+            if (const char* sub = pad_mods::sub_option_label(m)) {
-+              bool v = pad_mods::sub_option(m);
-+              if (settings_toggle(sub, &v)) { pad_mods::set_sub_option(m, v); changed = true; }
-+            }
-+            ImGui::Unindent(18.0f);
-+          }
-+          ImGui::PopID();
-+        }
-+      }
-+      ImGui::EndDisabled();
++      // The mods live in their own window (vooby_ui.inl); this row opens it.
++      static bool vooby_open = std::getenv("MU_VOOBY_UI_OPEN") != nullptr;   // test hook: open at start
++      if (vooby_ui::entry_button()) vooby_open = true;
++      if (vooby_open) changed |= vooby_ui::draw(&vooby_open);
 +    }
 +
      // ---- HUD ----
      // A port code compiled into the game (recomp/gecko.py PORT_CODES): the stock row drawn at PAL's
      // size and height. Display only, read when the HUD is built, so it applies from the next match.
+diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
+new file mode 100644
+index 0000000..ffca416
+--- /dev/null
++++ b/port/runtime/gx/vooby_ui.inl
+@@ -0,0 +1,355 @@
++// Vooby Mods window (F1 > Game > Vooby Mods > Open): a popup of its own over the settings, with a
++// header, one tab per group and a card per mod. Every control is a real ImGui item (an invisible
++// button drawn over), so mouse, keyboard and controller navigation all work as in the rest of F1.
++// Included from pc_settings.cpp after pc_settings_visuals.inl (settings_heading_font).
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++namespace vooby_ui {
++
++constexpr ImU32 kInk = IM_COL32(236, 240, 250, 255);
++constexpr ImU32 kMuted = IM_COL32(150, 160, 185, 255);
++constexpr ImU32 kCard = IM_COL32(24, 26, 44, 235);
++constexpr ImU32 kCardHover = IM_COL32(32, 35, 58, 240);
++constexpr ImU32 kEdge = IM_COL32(255, 255, 255, 22);
++constexpr ImU32 kPink = IM_COL32(236, 72, 153, 255);
++constexpr ImU32 kViolet = IM_COL32(139, 92, 246, 255);
++constexpr ImU32 kCyan = IM_COL32(34, 211, 238, 255);
++constexpr ImU32 kGreen = IM_COL32(52, 211, 153, 255);
++constexpr ImU32 kAmber = IM_COL32(251, 191, 36, 255);
++constexpr ImU32 kOff = IM_COL32(64, 70, 96, 255);
++
++inline float S() { return ImGui::GetFontSize() / 16.0f; }   // everything scales with the UI font
++
++inline ImU32 mix(ImU32 a, ImU32 b, float t) {
++  auto ch = [&](int s) { return (int)(((a >> s) & 255) + (((int)((b >> s) & 255) - (int)((a >> s) & 255)) * t)); };
++  return IM_COL32(ch(IM_COL32_R_SHIFT), ch(IM_COL32_G_SHIFT), ch(IM_COL32_B_SHIFT), ch(IM_COL32_A_SHIFT));
++}
++
++// Eased 0..1 per id, for switches and highlights.
++inline float ease(ImGuiID id, bool target, float speed = 16.0f) {
++  float v = ImGui::GetStateStorage()->GetFloat(id, target ? 1.0f : 0.0f);
++  v += ((target ? 1.0f : 0.0f) - v) * std::min(1.0f, ImGui::GetIO().DeltaTime * speed);
++  ImGui::GetStateStorage()->SetFloat(id, v);
++  return v;
++}
++
++// A rounded rectangle with a left-to-right gradient (ImGui's multi-colour fill has no rounding).
++inline void grad(ImDrawList* d, ImVec2 a, ImVec2 b, ImU32 c0, ImU32 c1, float rounding, ImDrawFlags flags = 0) {
++  const int v0 = d->VtxBuffer.Size;
++  d->AddRectFilled(a, b, IM_COL32_WHITE, rounding, flags);
++  ImGui::ShadeVertsLinearColorGradientKeepAlpha(d, v0, d->VtxBuffer.Size, a, ImVec2(b.x, a.y), c0, c1);
++}
++
++// A pill switch at the cursor; returns true when flipped.
++inline bool pill(const char* id, bool* value, float scale = 1.0f) {
++  const float s = S() * scale, w = 46 * s, h = 26 * s;
++  ImGui::PushID(id);
++  const bool clicked = ImGui::InvisibleButton("##pill", ImVec2(w, h));
++  if (clicked) *value = !*value;
++  const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
++  const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
++  const float t = ease(ImGui::GetID("t"), *value);
++  ImDrawList* d = ImGui::GetWindowDrawList();
++  if (t > 0.01f) d->AddRectFilled(ImVec2(a.x - 3 * s, a.y - 3 * s), ImVec2(b.x + 3 * s, b.y + 3 * s), mix(0, IM_COL32(236, 72, 153, 55), t), h);
++  grad(d, a, b, mix(kOff, kPink, t), mix(kOff, kViolet, t), h * 0.5f);
++  if (hot) d->AddRect(ImVec2(a.x - 2 * s, a.y - 2 * s), ImVec2(b.x + 2 * s, b.y + 2 * s), IM_COL32(255, 255, 255, 170), h, 0, 1.5f * s);
++  const float r = h * 0.5f - 4 * s;
++  const ImVec2 c(a.x + h * 0.5f + t * (w - h), a.y + h * 0.5f);
++  d->AddCircleFilled(ImVec2(c.x, c.y + 1.5f * s), r, IM_COL32(0, 0, 0, 90), 24);
++  d->AddCircleFilled(c, r, IM_COL32(250, 251, 255, 255), 24);
++  ImGui::PopID();
++  return clicked;
++}
++
++// Segmented buttons ("R | L | R or L"); returns true when the choice changed.
++inline bool segmented(const char* id, int* value, const char* const items[], int count) {
++  const float s = S(), h = 28 * s, pad = 14 * s;
++  ImGui::PushID(id);
++  bool changed = false;
++  ImDrawList* d = ImGui::GetWindowDrawList();
++  float total = 0;
++  for (int i = 0; i < count; ++i) total += ImGui::CalcTextSize(items[i]).x + pad * 2;
++  const ImVec2 o = ImGui::GetCursorScreenPos();
++  d->AddRectFilled(o, ImVec2(o.x + total + 4 * s, o.y + h + 4 * s), IM_COL32(12, 13, 26, 255), 9 * s);
++  float x = o.x + 2 * s;
++  for (int i = 0; i < count; ++i) {
++    const float w = ImGui::CalcTextSize(items[i]).x + pad * 2;
++    ImGui::SetCursorScreenPos(ImVec2(x, o.y + 2 * s));
++    ImGui::PushID(i);
++    if (ImGui::InvisibleButton("##seg", ImVec2(w, h)) && *value != i) { *value = i; changed = true; }
++    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
++    const float t = ease(ImGui::GetID("t"), *value == i, 20.0f);
++    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
++    if (t > 0.01f) grad(d, a, b, mix(0, kPink, t), mix(0, kViolet, t), 7 * s);
++    if (hot) d->AddRect(a, b, IM_COL32(255, 255, 255, 150), 7 * s, 0, 1.2f * s);
++    const ImVec2 ts = ImGui::CalcTextSize(items[i]);
++    d->AddText(ImVec2(a.x + (w - ts.x) * 0.5f, a.y + (h - ts.y) * 0.5f), *value == i ? kInk : kMuted, items[i]);
++    ImGui::PopID();
++    x += w;
++  }
++  ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + h + 4 * s));
++  ImGui::Dummy(ImVec2(total + 4 * s, 0));
++  ImGui::PopID();
++  return changed;
++}
++
++inline const char* status_text(ImU32* color) {
++  if (host::gameplay::vanilla_only()) { *color = kAmber; return "VANILLA SESSION"; }
++  if (!pad_mods::all_enabled()) { *color = kOff; return "OFF"; }
++  if (!pad_mods::any_enabled()) { *color = kMuted; return "NOTHING ON"; }
++  if (!pad_mods::allowed_now()) { *color = kAmber; return "PAUSED IN THIS MODE"; }
++  *color = kGreen; return "ACTIVE";
++}
++
++// One mod's card; returns true when something changed.
++inline bool card(int m) {
++  const pad_mods::Info& in = pad_mods::info(m);
++  const float s = S(), padx = 16 * s, pady = 12 * s;
++  ImGui::PushID(m);
++  bool changed = false;
++  ImDrawList* d = ImGui::GetWindowDrawList();
++  const float width = ImGui::GetContentRegionAvail().x;
++  const ImVec2 top = ImGui::GetCursorScreenPos();
++  bool on = pad_mods::enabled(m);
++  const bool opts = on && (pad_mods::has_trigger_choice(m) || pad_mods::has_jump_choice(m) || pad_mods::sub_option_label(m));
++  d->ChannelsSplit(2);
++  d->ChannelsSetCurrent(1);
++  // title + summary
++  const float text_w = width - padx * 2 - 64 * s;
++  ImGui::SetCursorScreenPos(ImVec2(top.x + padx + 6 * s, top.y + pady));
++  ImGui::PushFont(settings_heading_font());
++  const float title_px = 19.0f * s;
++  d->AddText(settings_heading_font(), title_px, ImGui::GetCursorScreenPos(), kInk, in.label, nullptr, text_w);
++  const ImVec2 title_sz = settings_heading_font()->CalcTextSizeA(title_px, FLT_MAX, text_w, in.label);
++  ImGui::PopFont();
++  ImGui::Dummy(ImVec2(text_w, title_sz.y));
++  ImGui::SetCursorScreenPos(ImVec2(top.x + padx + 6 * s, ImGui::GetCursorScreenPos().y + 2 * s));
++  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kMuted));
++  ImGui::PushTextWrapPos(top.x + padx + 6 * s + text_w - ImGui::GetWindowPos().x);
++  ImGui::TextUnformatted(in.summary);
++  const float text_bottom = ImGui::GetItemRectMax().y;   // where the text really ended
++  ImGui::PopTextWrapPos();
++  ImGui::PopStyleColor();
++  // the "?" with the full description
++  {
++    const ImVec2 q(top.x + width - padx - 46 * s - 30 * s, top.y + pady + 2 * s);
++    ImGui::SetCursorScreenPos(q);
++    ImGui::InvisibleButton("##help", ImVec2(22 * s, 22 * s));
++    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
++    d->AddCircle(ImVec2(q.x + 11 * s, q.y + 11 * s), 9.5f * s, hot ? kCyan : IM_COL32(255, 255, 255, 60), 24, 1.4f * s);
++    const ImVec2 qs = ImGui::CalcTextSize("?");
++    d->AddText(ImVec2(q.x + 11 * s - qs.x * 0.5f, q.y + 11 * s - qs.y * 0.5f), hot ? kCyan : kMuted, "?");
++    if (hot) {
++      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * s, 10 * s));
++      ImGui::BeginTooltip();
++      ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
++      ImGui::TextUnformatted(in.help);
++      ImGui::PopTextWrapPos();
++      ImGui::EndTooltip();
++      ImGui::PopStyleVar();
++    }
++  }
++  // the switch
++  ImGui::SetCursorScreenPos(ImVec2(top.x + width - padx - 46 * s, top.y + pady));
++  if (pill("##on", &on)) { pad_mods::set_enabled(m, on); changed = true; }
++  // the options strip, under the text
++  float bottom = 0;
++  bottom = std::max(text_bottom, top.y + pady + 26 * s);
++  if (opts) {
++    float oy = bottom + 10 * s;
++    d->AddLine(ImVec2(top.x + padx + 6 * s, oy - 4 * s), ImVec2(top.x + width - padx, oy - 4 * s), kEdge, 1.0f);
++    float ox = top.x + padx + 6 * s;
++    auto label = [&](const char* t) {
++      ImGui::SetCursorScreenPos(ImVec2(ox, oy + 5 * s + 2 * s));
++      d->AddText(ImGui::GetCursorScreenPos(), kMuted, t);
++      ox += ImGui::CalcTextSize(t).x + 8 * s;
++    };
++    float row_h = 32 * s;
++    if (pad_mods::has_trigger_choice(m)) {
++      static const char* triggers[] = {"R", "L", "R or L"};
++      label("Button");
++      ImGui::SetCursorScreenPos(ImVec2(ox, oy));
++      int c = pad_mods::trigger_choice(m);
++      if (segmented("trig", &c, triggers, 3)) { pad_mods::set_trigger_choice(m, c); changed = true; }
++      ox = ImGui::GetItemRectMax().x + 22 * s;
++    }
++    if (pad_mods::has_jump_choice(m)) {
++      static const char* jumps[] = {"X", "Y"};
++      if (ox + 140 * s > top.x + width - padx) { ox = top.x + padx + 6 * s; oy += row_h + 6 * s; }
++      label("Jump");
++      ImGui::SetCursorScreenPos(ImVec2(ox, oy));
++      int c = pad_mods::jump_choice(m);
++      if (segmented("jump", &c, jumps, 2)) { pad_mods::set_jump_choice(m, c); changed = true; }
++      ox = ImGui::GetItemRectMax().x + 22 * s;
++    }
++    if (const char* sub = pad_mods::sub_option_label(m)) {
++      const float need = ImGui::CalcTextSize(sub).x + 60 * s;
++      if (ox + need > top.x + width - padx) { ox = top.x + padx + 6 * s; oy += row_h + 6 * s; }
++      ImGui::SetCursorScreenPos(ImVec2(ox, oy + 3 * s));
++      bool v = pad_mods::sub_option(m);
++      if (pill("##sub", &v, 0.85f)) { pad_mods::set_sub_option(m, v); changed = true; }
++      d->AddText(ImVec2(ImGui::GetItemRectMax().x + 10 * s, oy + 7 * s), v ? kInk : kMuted, sub);
++    }
++    bottom = oy + row_h;
++  }
++  bottom += pady;
++  // background (drawn under the content)
++  d->ChannelsSetCurrent(0);
++  const ImVec2 a = top, b(top.x + width, bottom);
++  const bool hover = ImGui::IsMouseHoveringRect(a, b);
++  const float t = ease(ImGui::GetID("lit"), on, 12.0f);
++  const ImU32 base = hover ? kCardHover : kCard;
++  grad(d, a, b, mix(base, IM_COL32(58, 26, 70, 240), t * 0.8f), mix(base, IM_COL32(30, 28, 66, 240), t * 0.5f), 12 * s);
++  d->AddRect(a, b, mix(kEdge, IM_COL32(236, 72, 153, 120), t), 12 * s, 0, 1.0f);
++  d->AddRectFilled(ImVec2(a.x + 1, a.y + 10 * s), ImVec2(a.x + 5 * s, b.y - 10 * s), mix(kOff, kPink, t), 3 * s);
++  d->ChannelsMerge();
++  if (GImGui->CurrentItemFlags & ImGuiItemFlags_Disabled) d->AddRectFilled(a, b, IM_COL32(6, 6, 14, 150), 12 * s);
++  ImGui::SetCursorScreenPos(ImVec2(top.x, bottom));
++  ImGui::Dummy(ImVec2(width, 10 * s));
++  ImGui::PopID();
++  return changed;
++}
++
++// The row on the Game page that opens the window: a wide gradient button with the status.
++inline bool entry_button() {
++  const float s = S(), w = ImGui::GetContentRegionAvail().x, h = 64 * s;
++  const bool click = ImGui::InvisibleButton("##voobymods_open", ImVec2(w, h));
++  const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
++  const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
++  ImDrawList* d = ImGui::GetWindowDrawList();
++  const float t = ease(ImGui::GetID("##voobymods_open_hot"), hot, 14.0f);
++  grad(d, a, b, mix(IM_COL32(70, 22, 110, 255), IM_COL32(120, 36, 160, 255), t), mix(IM_COL32(24, 46, 130, 255), IM_COL32(36, 70, 190, 255), t), 14 * s);
++  d->AddRect(a, b, mix(IM_COL32(255, 255, 255, 30), IM_COL32(255, 255, 255, 170), t), 14 * s, 0, 1.3f * s);
++  d->AddText(settings_heading_font(), 24 * s, ImVec2(a.x + 20 * s, a.y + 10 * s), kInk, "VOOBY MODS");
++  int lit = 0;
++  for (int m = 0; m < pad_mods::kCount; ++m) lit += pad_mods::enabled(m) && pad_mods::info(m).group != pad_mods::Hidden;
++  ImU32 col; const char* st = status_text(&col);
++  char line[96]; std::snprintf(line, sizeof line, "%s  \xc2\xb7  %d on", st, lit);
++  d->AddCircleFilled(ImVec2(a.x + 25 * s, a.y + 46 * s), 3.5f * s, col, 12);
++  d->AddText(ImVec2(a.x + 34 * s, a.y + 46 * s - ImGui::GetFontSize() * 0.5f), IM_COL32(220, 225, 245, 230), line);
++  const char* open = "Open  \xe2\x80\xba";
++  const ImVec2 os = ImGui::CalcTextSize(open);
++  d->AddText(ImVec2(b.x - os.x - 22 * s, a.y + (h - os.y) * 0.5f), kInk, open);
++  return click;
++}
++
++// Draws the popup if open. Returns true when a setting changed (the caller saves).
++inline bool draw(bool* open) {
++  bool changed = false;
++  const float s = S();
++  if (*open && !ImGui::IsPopupOpen("##voobymods_window")) ImGui::OpenPopup("##voobymods_window");
++  const ImVec2 view = ImGui::GetMainViewport()->Size;
++  const ImVec2 size(std::min(900 * s, view.x * 0.94f), std::min(700 * s, view.y * 0.92f));
++  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
++  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
++  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16 * s);
++  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
++  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
++  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.055f, 0.06f, 0.11f, 0.985f));
++  ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.02f, 0.02f, 0.06f, 0.72f));
++  const bool shown = ImGui::BeginPopupModal("##voobymods_window", nullptr,
++                                            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
++                                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
++  ImGui::PopStyleColor(2);
++  ImGui::PopStyleVar(3);
++  if (!shown) { *open = false; return false; }
++
++  ImDrawList* d = ImGui::GetWindowDrawList();
++  const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
++  // ---- header: gradient band, title, status, master switch
++  const float hh = 92 * s;
++  grad(d, wp, ImVec2(wp.x + ws.x, wp.y + hh), IM_COL32(74, 22, 112, 255), IM_COL32(26, 44, 128, 255), 16 * s, ImDrawFlags_RoundCornersTop);
++  grad(d, ImVec2(wp.x, wp.y + hh - 3 * s), ImVec2(wp.x + ws.x, wp.y + hh), kPink, kCyan, 0);
++  // soft glows, kept inside the band: rings fading out
++  d->PushClipRect(ImVec2(wp.x + 16 * s, wp.y), ImVec2(wp.x + ws.x - 16 * s, wp.y + hh - 3 * s), true);
++  for (int i = 24; i >= 1; --i) {
++    d->AddCircleFilled(ImVec2(wp.x + ws.x * 0.80f, wp.y + 6 * s), 5 * s * i, IM_COL32(34, 211, 238, 3), 48);
++    d->AddCircleFilled(ImVec2(wp.x + ws.x * 0.18f, wp.y + hh), 4 * s * i, IM_COL32(236, 72, 153, 3), 48);
++  }
++  d->PopClipRect();
++  d->AddText(settings_heading_font(), 34 * s, ImVec2(wp.x + 28 * s, wp.y + 14 * s), kInk, "VOOBY MODS");
++  d->AddText(ImVec2(wp.x + 30 * s, wp.y + 56 * s), IM_COL32(205, 210, 235, 220), "Input assists that press buttons for you, as your own presses");
++  {
++    ImU32 col; const char* st = status_text(&col);
++    const ImVec2 ts = ImGui::CalcTextSize(st);
++    const float px = wp.x + ws.x - 28 * s - 46 * s - 22 * s - ts.x - 26 * s, py = wp.y + 30 * s;
++    d->AddRectFilled(ImVec2(px, py), ImVec2(px + ts.x + 26 * s, py + 26 * s), mix(col, IM_COL32(0, 0, 0, 255), 0.65f), 13 * s);
++    d->AddRect(ImVec2(px, py), ImVec2(px + ts.x + 26 * s, py + 26 * s), col, 13 * s, 0, 1.2f * s);
++    d->AddCircleFilled(ImVec2(px + 10 * s, py + 13 * s), 3.5f * s, col, 12);
++    d->AddText(ImVec2(px + 18 * s, py + 13 * s - ts.y * 0.5f), col, st);
++    ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - 28 * s - 46 * s, wp.y + 30 * s));
++    bool all = pad_mods::all_enabled();
++    if (pill("##all", &all)) { pad_mods::set_all_enabled(all); changed = true; }
++    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every mod at once. Off keeps each one's own switch for later.");
++  }
++
++  // ---- sidebar: one tab per group
++  static int tab = 0;
++  const float sw = 200 * s, top = wp.y + hh, foot = 54 * s;
++  d->AddRectFilled(ImVec2(wp.x, top), ImVec2(wp.x + sw, wp.y + ws.y), IM_COL32(10, 11, 22, 255), 16 * s, ImDrawFlags_RoundCornersBottomLeft);
++  float ty = top + 18 * s;
++  for (int g = 0; g < pad_mods::kGroupCount; ++g) {
++    int total = 0, lit = 0;
++    for (int m = 0; m < pad_mods::kCount; ++m)
++      if (pad_mods::info(m).group == g) { ++total; lit += pad_mods::enabled(m); }
++    if (!total) continue;
++    ImGui::SetCursorScreenPos(ImVec2(wp.x + 12 * s, ty));
++    ImGui::PushID(g);
++    if (ImGui::InvisibleButton("##tab", ImVec2(sw - 24 * s, 40 * s))) tab = g;
++    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
++    const float t = ease(ImGui::GetID("t"), tab == g, 18.0f);
++    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
++    d->AddRectFilled(a, b, mix(hot ? IM_COL32(255, 255, 255, 12) : 0, IM_COL32(139, 92, 246, 60), t), 10 * s);
++    if (t > 0.01f) d->AddRectFilled(ImVec2(a.x, a.y + 8 * s), ImVec2(a.x + 4 * s * t, b.y - 8 * s), kPink, 2 * s);
++    d->AddText(ImVec2(a.x + 16 * s, a.y + 11 * s), tab == g ? kInk : kMuted, pad_mods::group_name(g));
++    char n[16]; std::snprintf(n, sizeof n, "%d/%d", lit, total);
++    const ImVec2 ns = ImGui::CalcTextSize(n);
++    d->AddRectFilled(ImVec2(b.x - ns.x - 22 * s, a.y + 10 * s), ImVec2(b.x - 8 * s, b.y - 10 * s), lit ? IM_COL32(236, 72, 153, 70) : IM_COL32(255, 255, 255, 16), 10 * s);
++    d->AddText(ImVec2(b.x - ns.x - 15 * s, a.y + 20 * s - ns.y * 0.5f), lit ? kInk : kMuted, n);
++    ImGui::PopID();
++    ty += 46 * s;
++  }
++
++  // ---- cards
++  ImGui::SetCursorScreenPos(ImVec2(wp.x + sw + 20 * s, top + 16 * s));
++  ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
++  ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 8 * s);
++  ImGui::BeginChild("##cards", ImVec2(ws.x - sw - 40 * s, ws.y - hh - foot - 22 * s), false);
++  ImGui::BeginDisabled(host::gameplay::vanilla_only() || !pad_mods::all_enabled());
++  // Display order: movement, attacks and grabs, shield, the rest (as the old list had it).
++  static const int kOrder[] = {
++      pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
++      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
++      pad_mods::FoxFalcoShine, pad_mods::ShineWavedash, pad_mods::ShieldShine, pad_mods::FoxLaserLoop,
++      pad_mods::HumanTiming};
++  for (int m : kOrder)
++    if (pad_mods::info(m).group == tab) changed |= card(m);
++  ImGui::EndDisabled();
++  ImGui::EndChild();
++  ImGui::PopStyleVar();
++  ImGui::PopStyleColor();
++
++  // ---- footer
++  const float fy = wp.y + ws.y - foot;
++  d->AddLine(ImVec2(wp.x + sw, fy), ImVec2(wp.x + ws.x, fy), kEdge, 1.0f);
++  d->AddText(ImVec2(wp.x + sw + 22 * s, fy + 18 * s), kMuted, "Offline, Direct and Teams. Never Ranked, Unranked or Party.");
++  {
++    const char* t = "Close";
++    const ImVec2 ts = ImGui::CalcTextSize(t);
++    const float bw = ts.x + 40 * s, bh = 34 * s;
++    ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - bw - 20 * s, fy + (foot - bh) * 0.5f));
++    const bool click = ImGui::InvisibleButton("##close", ImVec2(bw, bh));
++    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
++    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
++    grad(d, a, b, hot ? kPink : mix(kPink, IM_COL32(0, 0, 0, 255), 0.3f), hot ? kViolet : mix(kViolet, IM_COL32(0, 0, 0, 255), 0.3f), bh * 0.5f);
++    d->AddText(ImVec2(a.x + (bw - ts.x) * 0.5f, a.y + (bh - ts.y) * 0.5f), kInk, t);
++    if (click || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight)) {
++      *open = false;
++      ImGui::CloseCurrentPopup();
++    }
++  }
++  ImGui::EndPopup();
++  return changed;
++}
++
++}  // namespace vooby_ui
 diff --git a/port/runtime/hle/hle_pad.cpp b/port/runtime/hle/hle_pad.cpp
 index 0ec0451..bc6914f 100644
 --- a/port/runtime/hle/hle_pad.cpp
