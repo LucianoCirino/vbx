@@ -55,7 +55,7 @@ index a82bcc9..0acfce4 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index 4706561..5f5d595 100644
+index 4706561..870ab12 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
 @@ -57,8 +57,10 @@
@@ -69,7 +69,15 @@ index 4706561..5f5d595 100644
  #include "offline_input_delay.h"
  #include "disc_archive.h"
  #include "user_gecko.h"
-@@ -1322,9 +1324,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -69,6 +71,7 @@
+ #include "native_savestate.h"
+ #include "lab_view.h"
+ #include "../runtime/abi/mu_look_snapshot.h"
++#include "../runtime/abi/mu_practice_cpu.h"   // Vooby Mods: the stage edges (mu_pc_stage_ledge)
+ // Both builds: the neutral netplay state. In the build without the Slippi layer it also answers the
+ // Slippi names; in the normal build a peer-to-peer session (--p2p-*) is found through it.
+ #include "netplay_state.h"
+@@ -1322,9 +1325,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
    {
      char dll_path[MAX_PATH] = {};
      HMODULE module = GetModuleHandleA(g_dll.c_str());
@@ -100,7 +108,7 @@ index 4706561..5f5d595 100644
        std::ifstream in(path);
        // The offsets are right only for the library they were read from: a file from another build
        // (a library copied without it) left the wrong memory out and restored the sound driver's on
-@@ -1341,7 +1362,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1341,7 +1363,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          if (std::sscanf(line.c_str(), "# dll_size %llu", &value) == 1) { other_build = value != dll_size; continue; }
          unsigned long long offset = 0, size = 0;
          if (std::sscanf(line.c_str(), "%llx %llx", &offset, &size) == 2 && size) {
@@ -109,7 +117,7 @@ index 4706561..5f5d595 100644
            bytes += size;
          }
        }
-@@ -1351,7 +1372,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1351,7 +1373,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          host::log("online: WARNING: %s missing; sound driver state is inside snapshots", path.c_str());
        else {
          exclusions.insert(exclusions.end(), sound.begin(), sound.end());
@@ -119,7 +127,15 @@ index 4706561..5f5d595 100644
        }
      }
    }
-@@ -2222,6 +2244,52 @@ void ranked_harness_tick() {
+@@ -2187,6 +2210,7 @@ int32_t h_vi_idle_step() {
+ // --online-test ranked, once a frame (the game reads its pads every frame, in every scene). A game
+ // that ended and is not back in Debug VS's match scene within 5 s (a results screen waiting for a
+ // press) is asked back into it for the set's next game; once the set's room has closed the run ends.
++extern std::atomic<int32_t> g_vooby_stage_file;   // below, with h_disc_entrynum
+ void ranked_harness_tick() {
+   if (g_online_test_mode != 0 || !g_online_test_started) return;
+   RankedHarness& h = g_ranked_harness;
+@@ -2222,6 +2246,60 @@ void ranked_harness_tick() {
    host::log("online test: ranked, back to the match scene for the next game (from major %d state %d)", scene[0], scene[1]);
  }
  
@@ -141,7 +157,12 @@ index 4706561..5f5d595 100644
 +  if (g_game.state_snapshot) g_game.state_snapshot(&pod);
 +  const bool online = slippi::online::session_mode() >= 0;
 +  if (!online)
-+    for (int p = 0; p < 4; ++p) { out->port[p] = MuLcancelFighter{}; out->fighter_kind[p] = 0; out->facing[p] = 0.0f; out->vel_x[p] = 0.0f; }
++    for (int p = 0; p < 4; ++p) { out->port[p] = MuLcancelFighter{}; out->fighter_kind[p] = 0; out->facing[p] = 0.0f; out->vel_x[p] = 0.0f; out->pos_x[p] = out->pos_y[p] = 0.0f; }
++  {   // the stage's main ledge, from the stage file opened (0: a stage the mods do not know)
++    float lx = 0.0f, ly = 0.0f;
++    if (const int32_t st = g_vooby_stage_file.load()) mu_pc_stage_ledge(st, &lx, &ly);
++    out->stage_edge_x = lx > 0.0f && lx < 1000.0f ? lx : 0.0f;
++  }
 +  for (int p = 0; p < 4; ++p) {
 +    const MuLcancelFighter& f = raw.port[p];
 +    if (!f.present || f.slot < 0 || f.slot > 3) continue;
@@ -163,6 +184,9 @@ index 4706561..5f5d595 100644
 +    float vel = 0.0f;
 +    if (pod.player[f.slot].present) std::memcpy(&vel, &pod.player[f.slot].vel_x, sizeof vel);
 +    out->vel_x[port] = vel;
++    float px = 0.0f, py = 0.0f;
++    if (pod.player[f.slot].present) { std::memcpy(&px, &pod.player[f.slot].pos_x, 4); std::memcpy(&py, &pod.player[f.slot].pos_y, 4); }
++    out->pos_x[port] = px; out->pos_y[port] = py;
 +  }
 +}
 +
@@ -172,7 +196,7 @@ index 4706561..5f5d595 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2249,6 +2317,91 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2249,6 +2327,91 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
@@ -264,7 +288,7 @@ index 4706561..5f5d595 100644
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -2336,10 +2489,19 @@ bool native_online_mode() {
+@@ -2336,10 +2499,19 @@ bool native_online_mode() {
    int32_t scene[2] = {0, 0};
    return g_game.practice(MU_PRACTICE_SCENE, scene, 2) == 0 && scene[0] == 8;
  }
@@ -284,7 +308,7 @@ index 4706561..5f5d595 100644
    auto it = g_paths.find(p);
    if (it != g_paths.end() && g_retail_view) {
      // The retail copy, or -1 for a file the retail game does not have. A pack costume that only
-@@ -3274,6 +3436,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+@@ -3274,6 +3446,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
  }
  
  void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
@@ -292,7 +316,7 @@ index 4706561..5f5d595 100644
  #ifdef YOUGAME_AGENT_TEST_HOOK
    if (command == 0x36)
      g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
-@@ -4129,7 +4292,7 @@ int run(void (*shutdown)(int)) {
+@@ -4129,7 +4302,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -352,10 +376,10 @@ index 7d23aeb..4bb4942 100644
    if (g_pointer_rested) visible = false;
    show_cursor(visible);
 diff --git a/port/runtime/abi/mu_lcancel_view.h b/port/runtime/abi/mu_lcancel_view.h
-index 8b1b559..18c87d5 100644
+index 8b1b559..f7f81f7 100644
 --- a/port/runtime/abi/mu_lcancel_view.h
 +++ b/port/runtime/abi/mu_lcancel_view.h
-@@ -30,6 +30,13 @@ typedef struct MuLcancelView {
+@@ -30,6 +30,17 @@ typedef struct MuLcancelView {
      float trigger_deadzone;                                /* ftCommonData analog_shoulder_deadzone */
      MuLcancelS32 lcancel_window;                           /* ftCommonData xE4 */
      MuLcancelFighter port[4];
@@ -366,6 +390,10 @@ index 8b1b559..18c87d5 100644
 +    float facing[4];
 +    /* Horizontal speed (MuFighterState vel_x), filled by the host; 0 where it is not known. */
 +    float vel_x[4];
++    /* Position (MuFighterState pos_x, pos_y) and the stage's ledge x (|x| of its main edges, 0 for a
++     * stage not known), filled by the host for Vooby Mods' ledgedash. */
++    float pos_x[4], pos_y[4];
++    float stage_edge_x;
  } MuLcancelView;
  
  #endif
@@ -2650,10 +2678,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..3d70938
+index 0000000..5848b39
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2405 @@
+@@ -0,0 +1,2439 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3005,6 +3033,8 @@ index 0000000..3d70938
 +  bool gj_hold = false, gj_hide = false;   // A kept down to the third hit; an extra press kept back until let go
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
 +  int ut_frame = -1;                    // up-tilt button: frames since its press (-1 none)
++  int ld_prewait = -1;                  // ledgedash pressed while falling past the edge: frames waited for the grab
++  float px = 0, py = 0;                 // the fighter's position (the host's view)
 +  int ut_a = 0;                         // ...frames A has been sent with the stick up
 +  bool ut_was_down = false;             // the button last frame, as the player held it
 +  bool swd_go = false, swd_hide_b = false;   // armed (B held at the landing); B kept from the game until let go
@@ -4245,6 +4275,10 @@ index 0000000..3d70938
 +constexpr int8_t kLedgeDriftDodge[0x1B] = {
 +    6, 4, 11, 13, 7, 11, 9, 8, 15, 0, 6, 0, 5, 0, 0, 0, 0, 6, 15, 16, 7, 6, 5, 4, 10, 19, 14};
 +int ledge_drift_dodge(int32_t kind) { return (kind >= 1 && kind <= 0x1B) ? kLedgeDriftDodge[kind - 1] : 0; }
++int ledge_dash_dodge(int32_t kind);
++int ledge_jump_dodge(int32_t kind);
++// A ledgedash measured for this fighter (any of the three tables).
++bool at_any(int32_t kind) { return ledge_drift_dodge(kind) > 0 || ledge_dash_dodge(kind) > 0 || ledge_jump_dodge(kind) > 0; }
 +// The dodge stick's y per Ft_Kind for the ledgedash (x on the circle): 0 = the default kWavedashY.
 +constexpr int8_t kLedgeDodgeY[0x1B] = {
 +    -30, 0, -30, 0, 0, 0, 0, -30, 0, 0, -30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -30, 0, -30, 0, -12, 0};
@@ -4255,6 +4289,7 @@ index 0000000..3d70938
 +  if (y == kWavedashY) dx = kWavedashX * face;
 +}
 +constexpr int32_t kCliffCatch = 0xFC, kCliffWait = 0xFD;
++float g_stage_edge = 0.0f;   // the stage's main ledge |x| (0 not known), from the host's view
 +constexpr int kLedgeDropStick = 23;        // 0.2875 of the rim: a stick component that counts as pushed
 +constexpr int kLedgeSelfDropWindow = 12;
 +constexpr int kLedgeSettle = 2;            // CliffWait frames the view must show before a ledgedash starts   // a trigger this soon after their own drop is never an air dodge
@@ -4373,6 +4408,32 @@ index 0000000..3d70938
 +    }
 +    host::log("padmods: trigger %d frames after your ledge drop: kept back (no air dodge)", age);
 +    st.ld_swallow = true;
++  }
++  // Slid or walked off the stage's edge (a friend 11-10: "if you wavedash back to the ledge and push
++  // the ledgedash button it makes u airdodge"; lab: Fox on FD, wavedash back, 43x10 14x5 29x9 then
++  // the grab; R in the fall went to the game, 236, dead). Falling past the edge, the grab is a few
++  // frames away: the press waits for it (then the ledgedash below), up to 20 frames; no grab (or a
++  // landing): kept back until let go, never an air dodge. Only past the stage's own edge, so a fall
++  // off a platform keeps its air dodge.
++  if (st.ld_frame < 0 && st.ld_prewait < 0 && st.ld_wait < 0 && !st.ld_swallow && r && !r_was && fighter &&
++      fighter->ground_or_air == 1 && fighter->motion_id >= 29 && fighter->motion_id <= 34 &&
++      g_stage_edge > 0.0f && std::fabs(st.px) >= g_stage_edge - 1.0f && st.py > -40.0f && st.py < 15.0f && at_any(kind)) {
++    st.ld_prewait = 0;
++    host::log("padmods: ledgedash pressed falling past the edge (x %.1f): waiting for the grab", st.px);
++  }
++  if (st.ld_prewait >= 0) {
++    hide_r();
++    if (fighter && (fighter->motion_id == kCliffCatch || fighter->motion_id == kCliffWait)) {
++      st.ld_prewait = -1;
++      st.ld_wait = 0;   // as a press during the grab: the ledgedash once hanging (below)
++    } else if (++st.ld_prewait > 20 || !fighter || fighter->ground_or_air == 0) {
++      host::log("padmods: no ledge grab after the press: kept back (no air dodge)");
++      st.ld_prewait = -1;
++      st.ld_swallow = true;
++      return true;
++    } else {
++      return true;
++    }
 +  }
 +  if (st.ld_swallow) {
 +    if (!r) { st.ld_swallow = false; return false; }
@@ -4903,7 +4964,8 @@ index 0000000..3d70938
 +    }
 +    const float facing = fighter ? (online ? local_facing : view.facing[p]) : 0.0f;
 +    float vel_x = 0.0f;
-+    if (fighter) for (int i = 0; i < 4; ++i) if (&view.port[i] == fighter) vel_x = view.vel_x[i];
++    if (fighter) for (int i = 0; i < 4; ++i) if (&view.port[i] == fighter) { vel_x = view.vel_x[i]; st.px = view.pos_x[i]; st.py = view.pos_y[i]; }
++    g_stage_edge = view.stage_edge_x;
 +    const bool up = pad.sub_y >= kCStickUpPress;
 +    Out& o = st.out;
 +    o = Out{};

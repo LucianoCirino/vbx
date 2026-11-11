@@ -20,7 +20,7 @@ SSH="ssh -o BatchMode=yes -o LogLevel=ERROR -o ServerAliveInterval=30"
 SCP="scp -o BatchMode=yes -o LogLevel=ERROR"
 say() { printf '\n== %s\n' "$*"; }
 die() { printf '\nSTOPPED: %s\n' "$*" >&2; exit 1; }
-[ -d "$TREE/port/generated" ] || die "no prepared tree $TREE (run tools/release-linux.sh $VER first)"
+[ -d "$TREE/build-linux" ] || die "no prepared tree $TREE (run tools/release-linux.sh $VER first)"
 
 say "Official $VER Windows files (NVIDIA runtime DLLs for the build, game files for the boot test)"
 ZIP=$WORK/MeleeUnlocked-$VER-win64.zip
