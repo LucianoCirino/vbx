@@ -2123,10 +2123,10 @@ index 06c151b..d9fd254 100644
  // True while the game is polling the online menus (mode select, the online character select screen,
 diff --git a/port/runtime/host/ai_takeover.cpp b/port/runtime/host/ai_takeover.cpp
 new file mode 100644
-index 0000000..8f03c8b
+index 0000000..a3e6eb4
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.cpp
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,390 @@
 +// Vooby Mods' AI takeover: see ai_takeover.h.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ai_takeover.h"
@@ -2382,13 +2382,31 @@ index 0000000..8f03c8b
 +      return false;
 +    }
 +    self = g_post[slot];
-+    float best = 1e30f;
-+    for (int k = 0; k < 4; ++k) {   // against the nearest fighter of another team
-+      if (k == slot || !g_post[k].have || g_post[k].frame != self.frame) continue;
-+      if (g_teams && g_team[k] == g_team[slot]) continue;
-+      const float dx = g_post[k].x - self.x, dy = g_post[k].y - self.y;
-+      if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; opp = g_post[k]; }
++    // Against a fighter of another team: the nearest, but kept. The pro AIs are 1v1 networks and
++    // phillip_ai.cpp restarts one (18 frames standing still) whenever the opponent's character
++    // changes, so in Teams a target flipping with every step froze the fighter again and again
++    // (TSC 11-11: "the ais in teams are dumb"). A new target only when this one is gone (dead, not in
++    // the match) or the other has been under half its distance for a second, 3 s after the last switch.
++    static int target[4] = {-1, -1, -1, -1}, closer_for[4] = {}, since[4] = {};
++    auto valid = [&](int k) {
++      return k >= 0 && k < 4 && k != slot && g_post[k].have && g_post[k].frame == self.frame &&
++             !(g_teams && g_team[k] == g_team[slot]) && g_post[k].stocks > 0;
++    };
++    auto dist2 = [&](int k) { const float dx = g_post[k].x - self.x, dy = g_post[k].y - self.y; return dx * dx + dy * dy; };
++    int nearest = -1;
++    for (int k = 0; k < 4; ++k) if (valid(k) && (nearest < 0 || dist2(k) < dist2(nearest))) nearest = k;
++    int& t = target[port];
++    ++since[port];
++    if (!valid(t)) { t = nearest; since[port] = 0; closer_for[port] = 0; }
++    else if (nearest >= 0 && nearest != t && dist2(nearest) < 0.25f * dist2(t)) {   // half the distance
++      if (++closer_for[port] >= 60 && since[port] >= 180) {
++        host::log("ai takeover: controller %d switches target to player %d (much closer)", port + 1, nearest + 1);
++        t = nearest; since[port] = 0; closer_for[port] = 0;
++      }
++    } else {
++      closer_for[port] = 0;
 +    }
++    if (t >= 0) opp = g_post[t];
 +    stage = g_stage;
 +    match = g_match;
 +  }

@@ -29,13 +29,43 @@ function Test-Modded($file) {
 }
 
 if (-not $Game -and (Test-Path "$Home_\game.txt")) { $Game = (Get-Content "$Home_\game.txt" -Raw).Trim() }
-if (-not $Game) {
-  foreach ($c in @("$env:LOCALAPPDATA\MeleeUnlocked", "$env:USERPROFILE\MeleeUnlocked", "$env:USERPROFILE\Desktop\MeleeUnlocked", "C:\MeleeUnlocked")) {
-    if (Test-Path "$c\melee_source.exe") { $Game = $c; break }
-  }
+# A typed or dragged path: quotes (either kind), PowerShell's "& '...'", spaces; the program itself
+# (melee_source.exe or MeleeUnlocked.exe) dragged instead of its folder.
+function Clean-Path($p) {
+  $p = "$p".Trim()
+  if ($p.StartsWith('&')) { $p = $p.Substring(1).Trim() }
+  $p = $p.Trim('"', "'", ' ')
+  if ($p -and (Test-Path -LiteralPath $p -PathType Leaf)) { $p = Split-Path -Parent $p }
+  return $p.TrimEnd('\')
 }
-if (-not $Game -and -not $Quiet) { $Game = (Read-Host "Game folder (the one with melee_source.exe in it; you can drag it here)").Trim('"', ' ') }
-$Game = $Game.TrimEnd('\')
+function Find-Game {
+  # The launcher or the game running from it, then the usual places (a folder named MeleeUnlocked*,
+  # also one level down, as unzipping often makes MeleeUnlocked-x\MeleeUnlocked-x).
+  foreach ($n in @("melee_source", "MeleeUnlocked")) {
+    foreach ($pr in @(Get-Process $n -ErrorAction SilentlyContinue)) {
+      try { $d = Split-Path -Parent $pr.Path; if (Test-Path "$d\melee_source.exe") { return $d } } catch {}
+    }
+  }
+  $roots = @($env:LOCALAPPDATA, $env:USERPROFILE, "$env:USERPROFILE\Desktop", "$env:USERPROFILE\Downloads",
+             "$env:USERPROFILE\Documents", "$env:USERPROFILE\OneDrive\Desktop", "$env:USERPROFILE\OneDrive\Documents",
+             $env:ProgramFiles, "C:\Games", "C:\", "D:\", "E:\")
+  foreach ($r in $roots) {
+    if (-not $r -or -not (Test-Path $r)) { continue }
+    foreach ($d in @(Get-ChildItem -LiteralPath $r -Directory -Filter "MeleeUnlocked*" -ErrorAction SilentlyContinue)) {
+      if (Test-Path "$($d.FullName)\melee_source.exe") { return $d.FullName }
+      foreach ($d2 in @(Get-ChildItem -LiteralPath $d.FullName -Directory -Filter "MeleeUnlocked*" -ErrorAction SilentlyContinue)) {
+        if (Test-Path "$($d2.FullName)\melee_source.exe") { return $d2.FullName }
+      }
+    }
+  }
+  return ""
+}
+if ($Game) { $Game = Clean-Path $Game }
+if (-not $Game) { $Game = Find-Game; if ($Game) { Say "Found the game in $Game" } }
+for ($try = 0; -not ($Game -and (Test-Path "$Game\melee_source.exe")) -and -not $Quiet -and $try -lt 3; $try++) {
+  if ($Game) { Write-Host "No melee_source.exe in '$Game'." -ForegroundColor Yellow }
+  $Game = Clean-Path (Read-Host "Your Melee Unlocked folder (the one with melee_source.exe in it, NOT the ISO). Drag the folder here and press Enter")
+}
 $Exe = Join-Path $Game "melee_source.exe"
 if (-not (Test-Path $Exe)) { Stop-Install "no melee_source.exe in '$Game'" }
 if (Get-Process melee_source -ErrorAction SilentlyContinue) { Stop-Install "the game is running; close it first" }
@@ -91,7 +121,7 @@ if (-not $Offline) {
   }
 }
 if ($Installed -ne $ModVer) {
-  Stop-Install "your game is $Installed, this build is for $ModVer.`nUpdate the game in its launcher (or wait for a build for $Installed). Playing online needs everyone on the same game version."
+  Stop-Install "your game is $Installed, this build is for $ModVer.`nGet the newest build: https://github.com/$Repo/releases/latest (or update the game in its launcher). Playing online needs everyone on the same game version."
 }
 $want = (Get-Content "$Here\SHA256SUMS" | Where-Object { $_ -match 'melee_source\.exe$' }) -split '\s+' | Select-Object -First 1
 $have = (Get-FileHash $New -Algorithm SHA256).Hash.ToLower()
