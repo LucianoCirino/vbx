@@ -2753,10 +2753,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..3d2a69c
+index 0000000..a8c7a7b
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2456 @@
+@@ -0,0 +1,2526 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -2997,6 +2997,20 @@ index 0000000..3d2a69c
 +     "since an up-tilt only comes out of standing, walking or crouching; during an attack or a\n"
 +     "landing it waits for the first frame one works. In the air the button is a jump as before.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
++    {"padmod_zelda_shield_nayru", "Nayru's Love out of shield", "Zelda: B while shielding does Nayru's Love on the first frame off the ground.",
++     "On: as Zelda, pressing B while shielding jumps out of the shield and does Nayru's Love (B with\n"
++     "the stick at rest) on the first frame off the ground, like the shine out of shield. B in shield\n"
++     "stun waits for the shield. Wins over 'Up-B out of shield' for Zelda.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},
++    {"padmod_run_jab", "Jab out of a run", "A while dashing or running gives a jab instead of a dash attack.",
++     "On: pressing A while dashing or running crouches for you first (the stick down for a frame or\n"
++     "two), then puts A in with the stick at rest: a jab instead of the dash attack. Any fighter.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
++    {"padmod_hold_jab", "Hold A: keep jabbing", "Keep A held and the jab goes on by itself (jab combo, rapid jab, Pikachu's endless jab).",
++     "On: hold A through a jab and the mod lets go and presses A again every frame for you, so the\n"
++     "jab combo and the rapid jab keep going until you let go of A. A quick tap is one jab as\n"
++     "before. Any fighter but Captain Falcon (his would always turn into the rapid jab).\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
 +};
 +
 +static_assert(sizeof kInfo / sizeof kInfo[0] == kCount, "one kInfo row per Mod, in enum order");
@@ -3107,6 +3121,9 @@ index 0000000..3d2a69c
 +  int gj_motion = -1, gj_presses = 0;   // Falcon's gentleman: the jab seen, A presses let in during it
 +  bool gj_hold = false, gj_hide = false;   // A kept down to the third hit; an extra press kept back until let go
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
++  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
++  int hj_held = 0, hj_t = 0;            // hold A to jab: frames A held in a jab, pulse clock
++  bool oos_nayru = false;               // the shield B is Zelda's Nayru's Love
 +  int ut_frame = -1;                    // up-tilt button: frames since its press (-1 none)
 +  int ld_prewait = -1;                  // ledgedash pressed while falling past the edge: frames waited for the grab
 +  bool ld_handoff = false;              // an R wavedash that met a fall instead of a jump: its press is the ledgedash's
@@ -3622,6 +3639,52 @@ index 0000000..3d2a69c
 +  // crouch first, softly: a full press down on a platform drops through it (lab 11-10, Fox on Stadium's)
 +  if (m == 20 || m == 21 || m == 22 || m == kRunBrake) { o.set_stick = true; o.sx = 0; o.sy = (int8_t)(-56 - test_sy); }
 +  if (f > 30 + delay || !fighter || fighter->ground_or_air != 0) st.ut_frame = -1;   // never got there: given up
++  return true;
++}
++
++// ---- A in a dash or run: a jab (RunJab)
++// Dash, Run, RunDirect and RunBrake take A as the dash attack; Squat takes A with the stick at rest
++// as the jab. So the stick goes down softly (as for the up-tilt button) with A kept back, and once
++// the fighter is in a state that jabs, A goes in with the stick at rest for 2 frames.
++bool run_jab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int delay) {
++  const bool fresh = (pad.button & kPadA) && !(st.buttons_was_down & kPadA);
++  const int m = fighter ? fighter->motion_id : -1;
++  const bool running = m == 20 || m == 21 || m == 22 || m == kRunBrake;
++  if (st.rj_frame < 0) {
++    if (!fresh || !fighter || fighter->ground_or_air != 0 || !running) return false;
++    st.rj_frame = 0; st.rj_a = 0;
++    host::log("padmods: A in a run (motion %d): jab", m);
++  }
++  const int f = st.rj_frame++;
++  if (st.rj_a > 0 || (!running && uptilt_state(m))) {
++    o.set_stick = true; o.sx = 0; o.sy = 0;
++    if (st.rj_a < 2) o.add |= kPadA;
++    if (++st.rj_a >= 3) st.rj_frame = -1;
++    return true;
++  }
++  o.remove |= kPadA;
++  if (running) { o.set_stick = true; o.sx = 0; o.sy = -56; }
++  if (f > 30 + delay || !fighter || fighter->ground_or_air != 0) st.rj_frame = -1;   // never got there: given up
++  return true;
++}
++
++// ---- A held through a jab: the jab goes on (HoldJab)
++// Jab 1 -> 2 -> 3 and the rapid jab each want new A presses (ftCo_Attack100.c counts presses and
++// releases). After A has been held kHoldJabAfter frames in a jab, A goes up and down every frame
++// for them while they hold it, also through the Wait between two jabs. A tap shorter than that is
++// one jab as before. Not Captain Falcon: any 3 presses turn his into the rapid jab.
++constexpr int kHoldJabAfter = 8;
++bool hold_jab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind) {
++  constexpr int32_t kFalcon = 0x02 + 1;
++  const int m = fighter ? fighter->motion_id : -1;
++  const bool jab = m >= 44 && m <= 49;   // Attack11, 12, 13, Attack100Start, Loop, End
++  if (!(pad.button & kPadA) || !fighter || fighter->ground_or_air != 0 || kind == kFalcon || (!jab && m != kWait) ||
++      (!jab && st.hj_held < kHoldJabAfter)) {
++    st.hj_held = 0; st.hj_t = 0;
++    return false;
++  }
++  if (st.hj_held < kHoldJabAfter) { ++st.hj_held; return false; }
++  if (++st.hj_t & 1) o.remove |= kPadA; else o.add |= kPadA;
 +  return true;
 +}
 +
@@ -4237,6 +4300,7 @@ index 0000000..3d2a69c
 +//          a frame more, then back through two in-between frames.
 +// B in shield stun (GuardSetOff, which takes nothing) is kept back up to kShineWindow frames and
 +// goes the moment the shield takes a jump. Never in the air or just after a jump press.
++constexpr int32_t kKindZeldaOos = 0x13 + 1;
 +bool shield_takes_jump(int32_t m) { return m == kGuardOn || m == kGuard || m == 0xB6; }   // + GuardReflect
 +bool shield_b(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
 +              bool jumping, float facing) {
@@ -4244,7 +4308,7 @@ index 0000000..3d2a69c
 +  if (st.oos_frame >= 0) {
 +    const int f = st.oos_frame++;
 +    if (f == 0) { o.add |= jump_bit(st.oos_shine ? ShieldShine : ShieldUpB); o.remove |= kPadB; jump_frame_stick(o, pad, facing, true); return true; }
-+    if (!st.oos_shine) {
++    if (!st.oos_shine && !st.oos_nayru) {
 +      if (f == 1) {   // aim: their stick when it already points up, else their side kept and the rest up
 +        int gx, gy;
 +        game_stick(pad.stick_x, pad.stick_y, gx, gy);
@@ -4261,24 +4325,26 @@ index 0000000..3d2a69c
 +      return false;
 +    }
 +    const int J = st.oos_js;
++    const int8_t sy = st.oos_nayru ? 0 : kShineStickY;   // Nayru's Love: neutral B
 +    if (f < J) {
 +      o.remove |= kPadB;
 +      if (f == 1 && J - 1 != 1) after_jump_frame_stick(o, pad, facing, true);
-+      if (f == J - 1) blend(o, pad.stick_x, pad.stick_y, 0, kShineStickY, 1, 2);
++      if (f == J - 1) blend(o, pad.stick_x, pad.stick_y, 0, sy, 1, 2);
 +      return true;
 +    }
-+    if (f <= J + 2) { if (f <= J + 1) o.add |= kPadB; o.set_stick = true; o.sx = 0; o.sy = kShineStickY; return true; }
-+    if (f <= J + 4) { blend(o, 0, kShineStickY, pad.stick_x, pad.stick_y, f - J - 2, 3); return true; }
++    if (f <= J + 2) { if (f <= J + 1) o.add |= kPadB; o.set_stick = true; o.sx = 0; o.sy = sy; return true; }
++    if (f <= J + 4) { blend(o, 0, sy, pad.stick_x, pad.stick_y, f - J - 2, 3); return true; }
 +    st.oos_frame = -1;
 +    return false;
 +  }
 +  auto start = [&] {
 +    st.oos_shine = enabled(ShieldShine) && fox_or_falco(kind);
++    st.oos_nayru = !st.oos_shine && enabled(ZeldaShieldNayru) && kind == kKindZeldaOos;
 +    st.oos_js = std::max(3, jumpsquat_of(kind));
 +    st.oos_frame = 0;
 +    st.lr_from_shield = trig_down(pad, trig_sel(ShineWavedash));
 +    if (st.oos_shine) st.oos_shine_recent = 20;
-+    host::log("padmods: B in shield: %s out of shield (motion %d)", st.oos_shine ? "shine" : "up-B",
++    host::log("padmods: B in shield: %s out of shield (motion %d)", st.oos_shine ? "shine" : st.oos_nayru ? "Nayru's" : "up-B",
 +              fighter ? (int)fighter->motion_id : -1);
 +  };
 +  if (st.oos_wait >= 0) {   // B in shield stun: kept back until the shield takes a jump
@@ -4294,7 +4360,8 @@ index 0000000..3d2a69c
 +    return shield_b(o, st, pad, fighter, kind, jumping, facing);
 +  }
 +  if (!b || st.b_was_down || jumping || !fighter || fighter->ground_or_air != 0) return false;
-+  const bool want = (enabled(ShieldShine) && fox_or_falco(kind)) || enabled(ShieldUpB);
++  const bool want = (enabled(ShieldShine) && fox_or_falco(kind)) || (enabled(ZeldaShieldNayru) && kind == kKindZeldaOos) ||
++                    enabled(ShieldUpB);
 +  if (!want) return false;
 +  const int32_t m = fighter->motion_id;
 +  if (m == 0xB5) {   // GuardSetOff: shield stun
@@ -4897,7 +4964,7 @@ index 0000000..3d2a69c
 +    case FoxFalco: return "Fox & Falco";
 +    case Options: return "Options";
 +    case AiGroup: return "AI takeover";
-+    case FalconSamus: return "Falcon & Samus";
++    case FalconSamus: return "Other characters";
 +    default: return "";
 +  }
 +}
@@ -5100,8 +5167,8 @@ index 0000000..3d2a69c
 +    }
 +
 +    if (enabled(CStickUpJump)) cstick_up_jc_smash(o, st, pad, fighter, kind, jumping); else { st.cs_frame = -1; st.cs_pend = -1; }
-+    const bool oos = (enabled(ShieldUpB) || enabled(ShieldShine)) && shield_b(o, st, pad, fighter, kind, jumping, facing);
-+    if (!enabled(ShieldUpB) && !enabled(ShieldShine)) { st.oos_frame = -1; st.oos_wait = -1; }
++    const bool oos = (enabled(ShieldUpB) || enabled(ShieldShine) || enabled(ZeldaShieldNayru)) && shield_b(o, st, pad, fighter, kind, jumping, facing);
++    if (!enabled(ShieldUpB) && !enabled(ShieldShine) && !enabled(ZeldaShieldNayru)) { st.oos_frame = -1; st.oos_wait = -1; }
 +    const bool ms = !oos && enabled(Multishine) && multishine(o, st, pad, fighter, kind, delay);
 +    if (!enabled(Multishine)) { st.ms_frame = -1; st.ms_wait = -1; }
 +    if (oos || ms) { st.shine_frame = -1; st.shine_wait = -1; }   // this B is the shield's, or the multishine's
@@ -5122,6 +5189,9 @@ index 0000000..3d2a69c
 +      st.grab_frame = -1; st.z_since = -1;
 +    }
 +    if (st.oos_shine_recent > 0) --st.oos_shine_recent;
++    const bool rj = enabled(RunJab) && run_jab(o, st, pad, fighter, delay);
++    if (!enabled(RunJab)) st.rj_frame = -1;
++    if (enabled(HoldJab) && !rj) hold_jab(o, st, pad, fighter, kind); else { st.hj_held = 0; st.hj_t = 0; }
 +    if (enabled(FalconGentleman)) falcon_gentleman(o, st, pad, fighter, kind);
 +    else { st.gj_motion = -1; st.gj_hold = st.gj_hide = false; }
 +    if (enabled(SamusSuperWavedash)) samus_swd(o, st, pad, fighter, kind, delay);
@@ -5215,10 +5285,10 @@ index 0000000..3d2a69c
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..2d5c2fa
+index 0000000..149f47d
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,161 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -5309,6 +5379,15 @@ index 0000000..2d5c2fa
 +  // X or Y (the choice) on the ground is an up-tilt: A with the stick tilted up; out of a dash or a
 +  // run it crouches first, the state an up-tilt comes out of. In the air the button stays a jump.
 +  UpTiltButton = 19,
++  // Zelda, B in shield: Nayru's Love out of shield (a jump, then B with the stick at rest on the
++  // first airborne frame, the same path as the shine out of shield).
++  ZeldaShieldNayru = 20,
++  // A while dashing or running, any fighter: a crouch first (the stick down), then A with the stick
++  // at rest: a jab instead of the dash attack.
++  RunJab = 21,
++  // A held through a jab, any fighter but Captain Falcon: A goes up and down every frame for them,
++  // so the jab combo (and a rapid jab, or Pikachu's repeating jab) keeps going while A stays held.
++  HoldJab = 22,
 +  kCount
 +};
 +
@@ -5513,10 +5592,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..12098b9
+index 0000000..43a8e5c
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1271 @@
+@@ -0,0 +1,1319 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -6783,6 +6862,54 @@ index 0000000..12098b9
 +  { host::PadState p = pad4({0x1000}); CHECK(p.button == 0x1000); }
 +  idle();
 +  for (int m = 0; m < pad_mods::kCount; ++m) pad_mods::set_enabled(m, false);
++
++  // ---- Zelda: B in shield = Nayru's Love on the first airborne frame (stick at rest) ----
++  {
++    constexpr int kZelda = 0x13 + 1;
++    only(pad_mods::ZeldaShieldNayru); pad_mods::set_enabled(pad_mods::ShieldUpB, true);
++    fighter(3, kZelda, 0xB3, 0); idle(45);
++    int bframe = -1;
++    for (int f = 0; f < 14; ++f) {
++      host::PadState p = pad4({(uint16_t)((f < 2 ? kB : 0) | kL), 70, 0});
++      if (f == 0) CHECK((p.button & kX) && !(p.button & kB));
++      if ((p.button & kB) && bframe < 0) { bframe = f; CHECK(p.stick_x == 0 && p.stick_y == 0); }
++    }
++    CHECK(bframe >= 3);   // not inside the jumpsquat (that would be up-B's path)
++    idle(45);
++    // Marth with the same switches: still up-B.
++    fighter(3, kMarth, 0xB3, 0); idle(45);
++    pad4({(uint16_t)(kB | kL), 70, 0});
++    { host::PadState p = pad4({(uint16_t)(kB | kL), 70, 0}); CHECK((p.button & kB) && p.stick_y == 55); }
++    idle(45);
++  }
++  // ---- A in a run: crouch, then a jab (A with the stick at rest) ----
++  only(pad_mods::RunJab);
++  fighter(3, kMarth, kRun, 0); idle(30);
++  { host::PadState p = pad4({kA, 80, 0}); CHECK(!(p.button & kA) && p.stick_y == -56 && p.stick_x == 0); }
++  state(3, 39, 0);   // Squat
++  { host::PadState p = pad4({kA, 80, 0}); CHECK((p.button & kA) && p.stick_x == 0 && p.stick_y == 0); }
++  { host::PadState p = pad4({kA, 80, 0}); CHECK((p.button & kA) && p.stick_x == 0 && p.stick_y == 0); }
++  { host::PadState p = pad4({kA, 80, 0}); CHECK(p.stick_x == 0 && (p.button & kA)); }   // their A held, stick at rest one more frame
++  { host::PadState p = pad4({kA, 80, 0}); CHECK(p.stick_x == 80); }   // done: theirs again
++  idle(30);
++  fighter(3, kMarth, kWait, 0); idle(30);
++  { host::PadState p = pad4({kA, 0, 0}); CHECK((p.button & kA)); }    // standing: their A
++  idle(30);
++  // ---- Hold A: after 8 frames held in a jab, A goes up and down; a tap is untouched; not Falcon ----
++  only(pad_mods::HoldJab);
++  for (int32_t k : {kMarth, (int32_t)(0x02 + 1)}) {
++    fighter(3, k, kWait, 0); idle(30);
++    pad4({kA}); state(3, kAttack, 0);
++    int ups = 0;
++    for (int f = 0; f < 30; ++f) { host::PadState p = pad4({kA}); if (!(p.button & kA)) ++ups; if (f < 8) CHECK(p.button & kA); }
++    if (k == kMarth) CHECK(ups >= 10); else CHECK(ups == 0);
++    idle(30);
++  }
++  fighter(3, kMarth, kWait, 0); idle(30);
++  pad4({kA}); state(3, kAttack, 0);
++  for (int f = 0; f < 4; ++f) CHECK(pad4({kA}).button & kA);
++  for (int f = 0; f < 10; ++f) CHECK(!(pad4({}).button & kA));        // a tap: nothing added
++  idle(30);
 +
 +  CHECK(range_violations == 0);
 +  std::puts("pad_mods: ok");
