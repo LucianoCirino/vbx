@@ -1407,7 +1407,7 @@ index 0000000..2fcb4c4
 +};
 diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
 new file mode 100644
-index 0000000..01cb12a
+index 0000000..ba8c19a
 --- /dev/null
 +++ b/port/runtime/gx/vooby_ui.inl
 @@ -0,0 +1,633 @@
@@ -1996,7 +1996,7 @@ index 0000000..01cb12a
 +  static const int kOrder[] = {
 +      pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
 +      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
-+      pad_mods::FoxFalcoShine, pad_mods::Multishine, pad_mods::ShineWavedash, pad_mods::LedgeStall, pad_mods::ShieldShine, pad_mods::FoxLaserLoop,
++      pad_mods::FoxFalcoShine, pad_mods::Multishine, pad_mods::ShineWavedash, pad_mods::LedgeStall, pad_mods::ShieldShine, pad_mods::FoxLaserLoop, pad_mods::HoldLaser,
 +      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash,
 +      pad_mods::ZeldaShieldNayru, pad_mods::JigglyRest, pad_mods::JumpWithY, pad_mods::HumanTiming};
 +  if (tab == kBlockTab) {   // matchmaking reads the list whatever the mods' switches say
@@ -2783,10 +2783,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..475a3e7
+index 0000000..120c155
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2626 @@
+@@ -0,0 +1,2659 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3049,6 +3049,13 @@ index 0000000..475a3e7
 +     "(again every other frame until she can act). Let go and the button does nothing. Range measured\n"
 +     "in the game (Rest's own hitbox, with a margin); Teams: only the other team counts.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},
++    {"padmod_hold_laser", "Hold B: lasers", "Fox and Falco: keep B held and the lasers keep firing, standing and in the air.",
++     "On: as Fox or Falco, after B starts a laser, keep holding it: the mod presses B again every other\n"
++     "frame for you, so the laser fires again and again on the ground and in the air, and when one\n"
++     "ends (standing, walking, crouching, jumping or falling) the next starts, the stick eased into\n"
++     "the neutral-B zone. Let go of B to stop. Ground lasers need 'Ground B is shine' off; for Fox in\n"
++     "the air the laser loop mod takes over when it is on.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
 +};
 +
 +static_assert(sizeof kInfo / sizeof kInfo[0] == kCount, "one kInfo row per Mod, in enum order");
@@ -3160,6 +3167,7 @@ index 0000000..475a3e7
 +  bool gj_want = false, gj_lag_seen = false;       // a next jab asked for; this jab's hitlag seen
 +  float gj_last_frame = -1.0f;                     // its animation frame last time (a repeat = hitlag)
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
++  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
@@ -3701,6 +3709,30 @@ index 0000000..475a3e7
 +  // crouch first, softly: a full press down on a platform drops through it (lab 11-10, Fox on Stadium's)
 +  if (m == 20 || m == 21 || m == 22 || m == kRunBrake) { o.set_stick = true; o.sx = 0; o.sy = (int8_t)(-56 - test_sy); }
 +  if (f > 30 + delay || !fighter || fighter->ground_or_air != 0) st.ut_frame = -1;   // never got there: given up
++  return true;
++}
++
++// ---- Fox/Falco: B held = lasers on and on (HoldLaser)
++// The laser's loop goes again on a fresh B inside its window (ftFox_SpecialN_CheckLoopInput, see the
++// laser loop above), so B goes up and down every other frame while they hold it: each loop gets a
++// fresh press. Once a laser has been seen since B went down, a fighter able to start one (standing,
++// walking, crouching, landing, jumping, falling) gets the same presses with the stick eased into the
++// neutral-B zone, the next laser. Nothing in other states (B held is not a press there).
++constexpr int32_t kLaserFirst = 341, kLaserLast = 346;
++void laser_stick(Out& o, const host::PadState& pad, int num, int den, int face, bool from_no_back);
++bool hold_laser(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind, float facing) {
++  if (!(pad.button & kPadB) || !f || !fox_or_falco(kind)) { st.hl_on = false; st.hl_t = 0; return false; }
++  const int32_t m = f->motion_id;
++  const bool laser = m >= kLaserFirst && m <= kLaserLast;
++  if (laser) st.hl_on = true;
++  if (!st.hl_on) return false;
++  if (enabled(FoxLaserLoop) && kind == kKindFox && f->ground_or_air != 0) return false;   // its own loop
++  const bool can_new = (m >= 25 && m <= 34) || m == kWait || (m >= 15 && m <= 18) || m == kSquat || m == 40 ||
++                       m == 41 || m == kLanding;
++  if (!laser && !can_new) return false;
++  o.remove |= kPadB;
++  if ((st.hl_t++ & 1) == 0) o.add |= kPadB;
++  if (!laser) laser_stick(o, pad, 1, 1, facing >= 0.0f ? 1 : -1, true);
 +  return true;
 +}
 +
@@ -5308,6 +5340,7 @@ index 0000000..475a3e7
 +    // into the laser zone on the shine's frame (lab 11-09: the second multishine came out a laser).
 +    if (enabled(FoxLaserLoop) && !ms && st.ms_frame < 0) fox_laser_loop(o, st, pad, fighter, kind, facing);
 +    else { st.lz_armed = false; st.lz_frame = -1; st.lz_jsb = -1; }
++    if (enabled(HoldLaser) && !ms && !oos) hold_laser(o, st, pad, fighter, kind, facing); else { st.hl_on = false; st.hl_t = 0; }
 +    const bool rjc = enabled(RunJcGrab) && run_jc_grab(o, st, pad, fighter, jumping);
 +    if (!enabled(RunJcGrab)) st.rjc_frame = -1;
 +    if (rjc) {
@@ -5415,10 +5448,10 @@ index 0000000..475a3e7
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..de17b45
+index 0000000..1004f52
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,167 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -5521,6 +5554,9 @@ index 0000000..de17b45
 +  // Jigglypuff: the X/Y button she does not jump with, held: down-B (Rest) the moment an opponent is
 +  // in Rest's range (measured in the game), B pressed every other frame until she can act.
 +  JigglyRest = 23,
++  // Fox/Falco with B held: B pressed again every other frame, so the laser loops on the ground and in
++  // the air, and a new laser starts whenever one ends (standing, walking, crouching, jumping, falling).
++  HoldLaser = 24,
 +  kCount
 +};
 +
