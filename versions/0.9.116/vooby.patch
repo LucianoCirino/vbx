@@ -55,7 +55,7 @@ index 275de45..8930fb6 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index d399410..c4c9d30 100644
+index d399410..19ece46 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
 @@ -59,8 +59,10 @@
@@ -77,7 +77,19 @@ index d399410..c4c9d30 100644
  // Both builds: the neutral netplay state. In the build without the Slippi layer it also answers the
  // Slippi names; in the normal build a peer-to-peer session (--p2p-*) is found through it.
  #include "netplay_state.h"
-@@ -1380,9 +1383,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1255,7 +1258,10 @@ uint32_t h_grid_color() { return gx::look_live().arcade_grid_rgb.load(std::memor
+ void h_hud_combo(int32_t slot, int32_t link_slot, float percent, int32_t stunned) {
+   gx::set_native_hud_combo(slot, link_slot, percent, stunned != 0);
+ }
+-void h_hud_extras(int32_t slot, int32_t nana_damage, int32_t team) { gx::set_native_hud_extras(slot, nana_damage, team); }
++void h_hud_extras(int32_t slot, int32_t nana_damage, int32_t team) {
++  gx::set_native_hud_extras(slot, nana_damage, team);
++  ai_takeover::note_hud_team(slot, team);   // Vooby Mods: the AI never targets its teammate
++}
+ void h_hud_player(int32_t slot, int32_t present, int32_t damage, int32_t stocks, float tag_x, float tag_y,
+                   int32_t tag_visible) {
+   gx::set_native_hud_player(slot, present != 0, damage, stocks, tag_x, tag_y, tag_visible != 0);
+@@ -1380,9 +1386,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
    {
      char dll_path[MAX_PATH] = {};
      HMODULE module = GetModuleHandleA(g_dll.c_str());
@@ -108,7 +120,7 @@ index d399410..c4c9d30 100644
        std::ifstream in(path);
        // The offsets are right only for the library they were read from: a file from another build
        // (a library copied without it) left the wrong memory out and restored the sound driver's on
-@@ -1399,7 +1421,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1399,7 +1424,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          if (std::sscanf(line.c_str(), "# dll_size %llu", &value) == 1) { other_build = value != dll_size; continue; }
          unsigned long long offset = 0, size = 0;
          if (std::sscanf(line.c_str(), "%llx %llx", &offset, &size) == 2 && size) {
@@ -117,7 +129,7 @@ index d399410..c4c9d30 100644
            bytes += size;
          }
        }
-@@ -1409,7 +1431,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1409,7 +1434,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          host::log("online: WARNING: %s missing; sound driver state is inside snapshots", path.c_str());
        else {
          exclusions.insert(exclusions.end(), sound.begin(), sound.end());
@@ -127,7 +139,7 @@ index d399410..c4c9d30 100644
        }
      }
    }
-@@ -2245,6 +2268,7 @@ int32_t h_vi_idle_step() {
+@@ -2245,6 +2271,7 @@ int32_t h_vi_idle_step() {
  // --online-test ranked, once a frame (the game reads its pads every frame, in every scene). A game
  // that ended and is not back in Debug VS's match scene within 5 s (a results screen waiting for a
  // press) is asked back into it for the set's next game; once the set's room has closed the run ends.
@@ -135,7 +147,7 @@ index d399410..c4c9d30 100644
  void ranked_harness_tick() {
    if (g_online_test_mode != 0 || !g_online_test_started) return;
    RankedHarness& h = g_ranked_harness;
-@@ -2280,6 +2304,68 @@ void ranked_harness_tick() {
+@@ -2280,6 +2307,68 @@ void ranked_harness_tick() {
    host::log("online test: ranked, back to the match scene for the next game (from major %d state %d)", scene[0], scene[1]);
  }
  
@@ -204,7 +216,7 @@ index d399410..c4c9d30 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2307,6 +2393,92 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2307,6 +2396,92 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
@@ -297,7 +309,7 @@ index d399410..c4c9d30 100644
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -2395,10 +2567,19 @@ bool native_online_mode() {
+@@ -2395,10 +2570,19 @@ bool native_online_mode() {
    int32_t scene[2] = {0, 0};
    return g_game.practice(MU_PRACTICE_SCENE, scene, 2) == 0 && scene[0] == 8;
  }
@@ -317,7 +329,7 @@ index d399410..c4c9d30 100644
    auto it = g_paths.find(p);
    if (it != g_paths.end() && g_retail_view) {
      // The retail copy, or -1 for a file the retail game does not have. A pack costume that only
-@@ -3358,6 +3539,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+@@ -3358,6 +3542,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
  }
  
  void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
@@ -325,7 +337,7 @@ index d399410..c4c9d30 100644
  #ifdef YOUGAME_AGENT_TEST_HOOK
    if (command == 0x36)
      g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
-@@ -4213,7 +4395,7 @@ int run(void (*shutdown)(int)) {
+@@ -4213,7 +4398,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -2164,10 +2176,10 @@ index 06c151b..d9fd254 100644
  // True while the game is polling the online menus (mode select, the online character select screen,
 diff --git a/port/runtime/host/ai_takeover.cpp b/port/runtime/host/ai_takeover.cpp
 new file mode 100644
-index 0000000..afa709c
+index 0000000..8814645
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.cpp
-@@ -0,0 +1,411 @@
+@@ -0,0 +1,423 @@
 +// Vooby Mods' AI takeover: see ai_takeover.h.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ai_takeover.h"
@@ -2291,9 +2303,21 @@ index 0000000..afa709c
 +
 +}  // namespace
 +
++std::atomic<int> g_hud_team[4] = {-1, -1, -1, -1};
++void note_hud_team(int slot, int team) {
++  if (slot < 0 || slot > 3) return;
++  if (g_hud_team[slot].exchange(team) != team && pad_mods::enabled(pad_mods::AiTakeover))
++    host::log("ai takeover: player %d is on team %d (game HUD)", slot + 1, team);
++}
++// Under g_mu. The replay's Game Start when there is one, else the game's HUD hook.
++int team_locked(int slot) {
++  if (slot < 0 || slot > 3) return -1;
++  if (g_teams) return g_team[slot];
++  return g_hud_team[slot].load();
++}
 +int team_of(int slot) {
 +  std::lock_guard<std::mutex> lock(g_mu);
-+  return g_teams && slot >= 0 && slot < 4 ? g_team[slot] : -1;
++  return team_locked(slot);
 +}
 +
 +void note_event(uint8_t command, const uint8_t* p, uint32_t size) {
@@ -2440,7 +2464,7 @@ index 0000000..afa709c
 +    static int closer_for[4] = {}, since[4] = {};
 +    auto valid = [&](int k) {
 +      return k >= 0 && k < 4 && k != slot && g_post[k].have && g_post[k].frame == self.frame &&
-+             !(g_teams && g_team[k] == g_team[slot]) && g_post[k].stocks > 0;
++             !(team_locked(k) >= 0 && team_locked(k) == team_locked(slot)) && g_post[k].stocks > 0;
 +    };
 +    auto dist2 = [&](int k) { const float dx = g_post[k].x - self.x, dy = g_post[k].y - self.y; return dx * dx + dy * dy; };
 +    int nearest = -1;
@@ -2581,10 +2605,10 @@ index 0000000..afa709c
 +}
 diff --git a/port/runtime/host/ai_takeover.h b/port/runtime/host/ai_takeover.h
 new file mode 100644
-index 0000000..e2dc343
+index 0000000..23d98fd
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.h
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,52 @@
 +// Vooby Mods' AI takeover (pad_mods.h AiTakeover): an AI plays a player's fighter by writing that
 +// controller's pad, the same way every other Vooby Mod adds presses, so the game library is the
 +// release's own and nothing inside the match changes (a library built here would desync online).
@@ -2628,6 +2652,9 @@ index 0000000..e2dc343
 +int slot_of_port(int port);
 +// The team of a player slot in a teams match (from the replay's Game Start), -1 otherwise.
 +int team_of(int slot);
++// The game's own team per player slot (the HUD hook, every drawn frame; -1 not a teams match):
++// used when no replay is recorded (the replay's Game Start is the other source).
++void note_hud_team(int slot, int team);
 +int port_of_slot(int slot);
 +// The controller an AI holds this frame for the fighter on controller `port`. False: nothing to
 +// play (no match, no fighter on that port yet); the player's own pad stays.
