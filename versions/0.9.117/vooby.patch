@@ -2810,10 +2810,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..dbe4aa3
+index 0000000..b659d34
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2706 @@
+@@ -0,0 +1,2710 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3062,9 +3062,10 @@ index 0000000..dbe4aa3
 +     "the stick at rest) on the first frame off the ground, like the shine out of shield. B in shield\n"
 +     "stun waits for the shield. Wins over 'Up-B out of shield' for Zelda.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},
-+    {"padmod_run_jab", "Jab out of a run", "A while dashing or running gives a jab instead of a dash attack.",
-+     "On: pressing A while dashing or running crouches for you first (the stick down for a frame or\n"
-+     "two), then puts A in with the stick at rest: a jab instead of the dash attack. Any fighter.\n"
++    {"padmod_run_jab", "Jab out of a run", "Let go of the stick and press A while dashing or running: a jab. Stick held: dash attack.",
++     "On: A with the stick let go (in the middle) while dashing or running crouches for you first\n"
++     "(the stick down for a frame or two), then puts A in with the stick at rest: a jab. With the\n"
++     "stick still pushed, A is your dash attack as always. Any fighter.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
 +    {"padmod_hold_jab", "Hold A: keep jabbing", "Keep A held and the jab goes on by itself (jab combo, rapid jab, Pikachu's endless jab).",
 +     "On: hold A through a jab and the mod lets go and presses A again every frame for you, so the\n"
@@ -3829,7 +3830,10 @@ index 0000000..dbe4aa3
 +  const int m = fighter ? fighter->motion_id : -1;
 +  const bool running = m == 20 || m == 21 || m == 22 || m == kRunBrake;
 +  if (st.rj_frame < 0) {
-+    if (!fresh || !fighter || fighter->ground_or_air != 0 || !running) return false;
++    // Only a neutral A (TSC 11-13: "i couldnt even dash attack"): with the stick still pushed it is
++    // their dash attack.
++    const bool neutral = std::abs((int)pad.stick_x) < kStickDeadzone && std::abs((int)pad.stick_y) < kStickDeadzone;
++    if (!fresh || !fighter || fighter->ground_or_air != 0 || !running || !neutral) return false;
 +    st.rj_frame = 0; st.rj_a = 0;
 +    host::log("padmods: A in a run (motion %d): jab", m);
 +  }
@@ -5835,10 +5839,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..68db8ce
+index 0000000..e36118d
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1354 @@
+@@ -0,0 +1,1357 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -7128,11 +7132,14 @@ index 0000000..68db8ce
 +  // ---- A in a run: crouch, then a jab (A with the stick at rest) ----
 +  only(pad_mods::RunJab);
 +  fighter(3, kMarth, kRun, 0); idle(30);
-+  { host::PadState p = pad4({kA, 80, 0}); CHECK(!(p.button & kA) && p.stick_y == -56 && p.stick_x == 0); }
++  { host::PadState p = pad4({kA, 80, 0}); CHECK((p.button & kA) && p.stick_x == 80); }   // stick held: their dash attack
++  idle(30);
++  fighter(3, kMarth, kRun, 0); idle(30);
++  { host::PadState p = pad4({kA, 0, 0}); CHECK(!(p.button & kA) && p.stick_y == -56 && p.stick_x == 0); }
 +  state(3, 39, 0);   // Squat
-+  { host::PadState p = pad4({kA, 80, 0}); CHECK((p.button & kA) && p.stick_x == 0 && p.stick_y == 0); }
-+  { host::PadState p = pad4({kA, 80, 0}); CHECK((p.button & kA) && p.stick_x == 0 && p.stick_y == 0); }
-+  { host::PadState p = pad4({kA, 80, 0}); CHECK(p.stick_x == 0 && (p.button & kA)); }   // their A held, stick at rest one more frame
++  { host::PadState p = pad4({kA, 0, 0}); CHECK((p.button & kA) && p.stick_x == 0 && p.stick_y == 0); }
++  { host::PadState p = pad4({kA, 0, 0}); CHECK((p.button & kA) && p.stick_x == 0 && p.stick_y == 0); }
++  { host::PadState p = pad4({kA, 0, 0}); CHECK(p.stick_x == 0 && (p.button & kA)); }   // their A held, stick at rest one more frame
 +  { host::PadState p = pad4({kA, 80, 0}); CHECK(p.stick_x == 80); }   // done: theirs again
 +  idle(30);
 +  fighter(3, kMarth, kWait, 0); idle(30);
