@@ -38,10 +38,10 @@ index b28da70..a75f086 100644
  
  The game's Tournament Melee entry opens a native **20XX TE Settings** menu. Use the stick
 diff --git a/port/CMakeLists.txt b/port/CMakeLists.txt
-index b5eb549..2087300 100644
+index 812306e..2f2a056 100644
 --- a/port/CMakeLists.txt
 +++ b/port/CMakeLists.txt
-@@ -576,6 +576,12 @@ target_compile_features(port_lcancel_indicator_test PRIVATE cxx_std_17)
+@@ -584,6 +584,12 @@ target_compile_features(port_lcancel_indicator_test PRIVATE cxx_std_17)
  target_compile_options(port_lcancel_indicator_test PRIVATE /EHsc)
  target_compile_definitions(port_lcancel_indicator_test PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
  add_test(NAME port_lcancel_indicator COMMAND port_lcancel_indicator_test)
@@ -55,7 +55,7 @@ index b5eb549..2087300 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index d0f9e7d..92ee25a 100644
+index 708019e..6af045d 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
 @@ -58,8 +58,10 @@
@@ -77,7 +77,7 @@ index d0f9e7d..92ee25a 100644
  // Both builds: the neutral netplay state. In the build without the Slippi layer it also answers the
  // Slippi names; in the normal build a peer-to-peer session (--p2p-*) is found through it.
  #include "netplay_state.h"
-@@ -1323,9 +1326,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1330,9 +1333,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
    {
      char dll_path[MAX_PATH] = {};
      HMODULE module = GetModuleHandleA(g_dll.c_str());
@@ -108,7 +108,7 @@ index d0f9e7d..92ee25a 100644
        std::ifstream in(path);
        // The offsets are right only for the library they were read from: a file from another build
        // (a library copied without it) left the wrong memory out and restored the sound driver's on
-@@ -1342,7 +1364,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1349,7 +1371,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          if (std::sscanf(line.c_str(), "# dll_size %llu", &value) == 1) { other_build = value != dll_size; continue; }
          unsigned long long offset = 0, size = 0;
          if (std::sscanf(line.c_str(), "%llx %llx", &offset, &size) == 2 && size) {
@@ -117,7 +117,7 @@ index d0f9e7d..92ee25a 100644
            bytes += size;
          }
        }
-@@ -1352,7 +1374,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1359,7 +1381,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          host::log("online: WARNING: %s missing; sound driver state is inside snapshots", path.c_str());
        else {
          exclusions.insert(exclusions.end(), sound.begin(), sound.end());
@@ -127,7 +127,7 @@ index d0f9e7d..92ee25a 100644
        }
      }
    }
-@@ -2188,6 +2211,7 @@ int32_t h_vi_idle_step() {
+@@ -2195,6 +2218,7 @@ int32_t h_vi_idle_step() {
  // --online-test ranked, once a frame (the game reads its pads every frame, in every scene). A game
  // that ended and is not back in Debug VS's match scene within 5 s (a results screen waiting for a
  // press) is asked back into it for the set's next game; once the set's room has closed the run ends.
@@ -135,7 +135,7 @@ index d0f9e7d..92ee25a 100644
  void ranked_harness_tick() {
    if (g_online_test_mode != 0 || !g_online_test_started) return;
    RankedHarness& h = g_ranked_harness;
-@@ -2223,6 +2247,60 @@ void ranked_harness_tick() {
+@@ -2230,6 +2254,60 @@ void ranked_harness_tick() {
    host::log("online test: ranked, back to the match scene for the next game (from major %d state %d)", scene[0], scene[1]);
  }
  
@@ -196,7 +196,7 @@ index d0f9e7d..92ee25a 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2250,6 +2328,91 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2257,6 +2335,91 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
@@ -288,7 +288,7 @@ index d0f9e7d..92ee25a 100644
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -2337,10 +2500,19 @@ bool native_online_mode() {
+@@ -2344,10 +2507,19 @@ bool native_online_mode() {
    int32_t scene[2] = {0, 0};
    return g_game.practice(MU_PRACTICE_SCENE, scene, 2) == 0 && scene[0] == 8;
  }
@@ -308,7 +308,7 @@ index d0f9e7d..92ee25a 100644
    auto it = g_paths.find(p);
    if (it != g_paths.end() && g_retail_view) {
      // The retail copy, or -1 for a file the retail game does not have. A pack costume that only
-@@ -3300,6 +3472,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+@@ -3307,6 +3479,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
  }
  
  void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
@@ -316,7 +316,7 @@ index d0f9e7d..92ee25a 100644
  #ifdef YOUGAME_AGENT_TEST_HOOK
    if (command == 0x36)
      g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
-@@ -4155,7 +4328,7 @@ int run(void (*shutdown)(int)) {
+@@ -4162,7 +4335,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -398,7 +398,7 @@ index 8b1b559..f7f81f7 100644
  
  #endif
 diff --git a/port/runtime/gx/pc_settings.cpp b/port/runtime/gx/pc_settings.cpp
-index d22a7ee..80017cb 100644
+index bf5cb95..36b6fe4 100644
 --- a/port/runtime/gx/pc_settings.cpp
 +++ b/port/runtime/gx/pc_settings.cpp
 @@ -52,6 +52,11 @@
@@ -510,7 +510,7 @@ index d22a7ee..80017cb 100644
  static void draw_player_nicknames() {
    if (!g_hud_match) return;
    const OverlayBounds bounds = overlay_bounds();
-@@ -733,7 +814,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
+@@ -737,7 +818,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
  // while the settings panel is open, which is when the overlay may be dragged and resized.
  static void draw_input_overlay(int port, int row, bool lone, bool editable, bool borderless, bool values, int knob) {
    host::PadState pads[4]{};
@@ -519,7 +519,7 @@ index d22a7ee..80017cb 100644
    int slot = port < 0 || port > 3 ? 0 : port;
    // An adapter socket the player is not using reports nothing, and the overlay then drew an empty
    // controller with no hint why. With a single port selected, show the first one that has a device
-@@ -2373,6 +2454,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
+@@ -2376,6 +2457,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
        else if (key == "lcancel_flash_mode") saved_lcancel_flash = std::clamp(std::stoi(value), 0, 6);
        else if (key == "lcancel_success_flash") saved_lcancel_success = std::clamp(std::stoi(value), 0, 2);
        else if (key == "autolcancel") lcancel::set_automatic(value == "1");
@@ -541,7 +541,7 @@ index d22a7ee..80017cb 100644
        else if (key == "palstockicons") gecko::option_pal_stock_icons = value == "1";
        else if (key == "noscreenshake") gecko::option_no_screen_shake = value == "1";
        else if (key == "screenshake") gecko::option_screen_shake_percent = std::clamp(std::stoi(value), 0, 200);
-@@ -2777,6 +2873,8 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
+@@ -2779,6 +2875,8 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
  
  #include "ui_sources/gd_melee/text.inl"
  #include "pc_settings_visuals.inl"
@@ -550,7 +550,7 @@ index d22a7ee..80017cb 100644
  
  // A change that applies at the next start (a mod look, an audio driver, a graphics backend): a button
  // that saves the settings and restarts the game, instead of the player closing and reopening it. The
-@@ -4446,7 +4544,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
+@@ -4447,7 +4545,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
         << "\nlcancel_flash_mode " << mu_lcancel_flash_mode(options.te_options2, lcancel::flash_mode())
         << "\nlcancel_success_flash " << mu_lcancel_success_color(options.te_options2)
         << "\nlcancelindicator " << (lcancel::indicator_enabled() ? 1 : 0)
@@ -576,7 +576,7 @@ index d22a7ee..80017cb 100644
         << "\npalstockicons " << (gecko::option_pal_stock_icons ? 1 : 0)
         << "\nnoscreenshake " << (gecko::option_no_screen_shake ? 1 : 0)
         << "\nscreenshake " << gecko::option_screen_shake_percent
-@@ -5098,6 +5213,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5099,6 +5214,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      else if (const char* tab = host::test_env::getenv("MELEE_TEST_SETTINGS_TAB"))
        state.active_tab = std::clamp(std::atoi(tab), 0, 7);
      if (test_menu_style() >= 0) options.overlay_style = test_menu_style();
@@ -585,7 +585,7 @@ index d22a7ee..80017cb 100644
    }
    const auto reset_settings_home = [&state](const char* why) {
      if (g_ui_diag) host::log("ui diag: settings reset to home (%s), tab %d", why, state.active_tab);
-@@ -5115,6 +5232,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5116,6 +5233,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      state.practice_open = false;
      reset_settings_home("guest Options row");
    }
@@ -596,7 +596,7 @@ index d22a7ee..80017cb 100644
    if (host::window_take_settings_toggle()) {
      if (state.legacy_presentation) {
        options.overlay_style = state.legacy_saved_appearance;
-@@ -9386,7 +9507,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9378,7 +9499,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        ImGui::EndDisabled();
        if (ranked) settings_hint(lcancel::policy::ranked_hint);
        if (host::gameplay::vanilla_only()) settings_hint("Disabled for this vanilla-only session.");
@@ -606,7 +606,7 @@ index d22a7ee..80017cb 100644
  #ifdef MELEE_NO_SLIPPI   // this build's matches are all the one kind, where it works
        settings_hint("(NOTE: Works offline and in online matches)");
        if (automatic) {
-@@ -9405,6 +9527,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9397,6 +9519,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        }
      }
  
@@ -623,7 +623,7 @@ index d22a7ee..80017cb 100644
      // ---- HUD ----
      // A port code compiled into the game (recomp/gecko.py PORT_CODES): the stock row drawn at PAL's
      // size and height. Display only, read when the HUD is built, so it applies from the next match.
-@@ -10944,7 +11076,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -10949,7 +11081,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
    if (!state.fill_window && !state.open && !state.menu_open && options.show_player_nicknames)
      draw_player_nicknames();
    if (!state.fill_window && !state.open && !state.menu_open) draw_combo_counter();
@@ -2115,10 +2115,10 @@ index b4ae200..0986f8c 100644
    host::log("slippi: opponent found (decider: %d)", is_host_);
  }
 diff --git a/port/runtime/hle/slippi_online.cpp b/port/runtime/hle/slippi_online.cpp
-index ee6973d..f7e48e6 100644
+index d7bd9f4..2217612 100644
 --- a/port/runtime/hle/slippi_online.cpp
 +++ b/port/runtime/hle/slippi_online.cpp
-@@ -1560,6 +1560,7 @@ void handle_get_player_settings(std::vector<uint8_t>& q) {
+@@ -1508,6 +1508,7 @@ void handle_get_player_settings(std::vector<uint8_t>& q) {
  }  // namespace
  
  Config& config() { return g_config; }
@@ -2753,10 +2753,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..ab8501a
+index 0000000..3d2a69c
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2453 @@
+@@ -0,0 +1,2456 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -2975,8 +2975,8 @@ index 0000000..ab8501a
 +     "stick down, so a new shine comes out on the ground. Tap B as fast as you like: a press that\n"
 +     "comes before the shine can be jumped out of waits for that moment.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
-+    {"padmod_ledge_stall", "Up-B ledge stall", "Hold B while hanging on the ledge: drop and up-B back to it, again and again.",
-+     "On: as Fox or Falco hanging on the ledge, hold B: the mod drops (stick down) and up-Bs at once,\n"
++    {"padmod_ledge_stall", "Up-B ledge stall", "Hold B (stick at rest) while hanging on the ledge: drop and up-B back to it, again and again.",
++     "On: as Fox or Falco hanging on the ledge, hold B with the stick at rest: the mod drops and up-Bs at once,\n"
 +     "and the up-B's startup grabs the ledge again; while you keep holding B it does it again.\n"
 +     "Let go of B to stop. If one does not get back to the ledge, the up-B goes on as yours and no\n"
 +     "more are started until B is let go.\n"
@@ -3556,6 +3556,9 @@ index 0000000..ab8501a
 +    return true;
 +  }
 +  if (st.us_stopped || !fighter || !fox_or_falco(kind) || fighter->motion_id != 0xFD /* CliffWait */) return false;
++  // Only with the stick at rest: a stick pushed anywhere is their own ledge option (down/away = drop,
++  // then B is their shine or laser). Friend 11-12: drop + shine came out as up-B.
++  if (std::abs((int)pad.stick_x) >= kStickDeadzone || std::abs((int)pad.stick_y) >= kStickDeadzone) return false;
 +  host::log("padmods: ledge stall (kind %d)", kind - 1);
 +  st.us_frame = 0;
 +  return ledge_stall(o, st, pad, fighter, kind, delay);
@@ -5369,7 +5372,7 @@ index 0000000..2d5c2fa
 +
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/window.cpp b/port/runtime/host/window.cpp
-index 1a6d40f..58eb8e5 100644
+index af6c26c..1910a9b 100644
 --- a/port/runtime/host/window.cpp
 +++ b/port/runtime/host/window.cpp
 @@ -89,6 +89,8 @@ std::atomic<bool> g_legacy_settings_toggle{false};
@@ -5426,7 +5429,7 @@ index 1a6d40f..58eb8e5 100644
  
  namespace {
  bool g_capture_key_baseline[256]{};
-@@ -1636,7 +1644,7 @@ void input_poll(PadState out[4]) {
+@@ -1650,7 +1658,7 @@ void input_poll(PadState out[4]) {
      // Scripted runs took this return before the overlay's copy was made below, so the controller
      // overlay stayed blank whenever a script was driving. It is the only way to see the overlay
      // without a controller in hand, so keep it fed here too.
@@ -5435,7 +5438,7 @@ index 1a6d40f..58eb8e5 100644
      return;
    }
    InputDebugSnapshot debug{};
-@@ -1646,7 +1654,7 @@ void input_poll(PadState out[4]) {
+@@ -1660,7 +1668,7 @@ void input_poll(PadState out[4]) {
    }
    ui.gamecube = debug.gc_mask != 0;
    route_takeover(out);
@@ -5444,7 +5447,7 @@ index 1a6d40f..58eb8e5 100644
    // MELEE_TEST_PAD_TRACE=<file> (tests only, hidden runs): one line each time a port's input changes,
    // as the game will read it, so a test that drives a controller can check every press arrived.
    if (options.no_gc_adapter) {
-@@ -1809,6 +1817,14 @@ void input_last_pads(PadState out[4]) {
+@@ -1823,6 +1831,14 @@ void input_last_pads(PadState out[4]) {
    std::lock_guard<std::mutex> lock(g_last_pads_mutex);
    for (int port = 0; port < 4; ++port) out[port] = g_last_pads[port];
  }
@@ -5510,10 +5513,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..c481e1a
+index 0000000..12098b9
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1254 @@
+@@ -0,0 +1,1271 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -6439,6 +6442,23 @@ index 0000000..c481e1a
 +  // Not Fox or Falco, or not in a shine: B is theirs.
 +  fighter(3, kMarth, kShineLoop, 0); CHECK(pad4({kB}).button == kB); idle();
 +  fighter(3, kFox, kWait, 0); CHECK(pad4({kB}).button == kB); idle(45);
++
++  // ---- Up-B ledge stall: B with the stick at rest starts it; down + B (drop shine) is theirs ----
++  only(pad_mods::LedgeStall);
++  fighter(3, kFox, 0xFD, 1); view.facing[3] = 1.0f; idle(30);
++  { host::PadState p = pad4({kB, 0, -80}); CHECK((p.button & kB) && p.stick_y == -80); }   // drop + B: untouched
++  { host::PadState p = pad4({kB, 0, -80}); CHECK((p.button & kB) && p.stick_y == -80); }
++  state(3, 29, 1);
++  { host::PadState p = pad4({kB, 0, -80}); CHECK((p.button & kB) && p.stick_y == -80); }   // falling: their shine
++  idle(30);
++  fighter(3, kFox, 0xFD, 1); idle(30);
++  { host::PadState p = pad4({kB, -80, 0}); CHECK((p.button & kB) && p.stick_x == -80); }  // away + B: untouched
++  idle(30);
++  fighter(3, kFox, 0xFD, 1); idle(30);
++  pad4({kB});                                                                             // at rest: the stall
++  { host::PadState p = pad4({kB}); CHECK(!(p.button & kB) && p.stick_y == -80); }        // its drop
++  { host::PadState p = pad4({kB}); CHECK((p.button & kB) && p.stick_y == 80); }          // its up-B
++  idle(30); state(3, kWait, 0); idle(30); view.facing[3] = 0.0f;
 +
 +  // ---- Ledgedash: a light analog R on the ledge never reaches the game (no roll); a full press goes ----
 +  only(pad_mods::LedgeDash);
