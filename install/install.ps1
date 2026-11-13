@@ -7,7 +7,7 @@
 # program is kept as melee_source.release-<version>.exe beside it. Close the game first.
 # To update, run it again: it looks online for the newest build for the installed game version
 # (also after the game updated itself) and installs that instead. -Offline skips the check.
-param([string]$Game = "", [switch]$Uninstall, [switch]$NoPause, [switch]$Quiet, [switch]$Offline)
+param([string]$Game = "", [switch]$Uninstall, [switch]$NoPause, [switch]$Quiet, [switch]$Offline, [switch]$NoProAI)
 if ($Quiet) { $NoPause = $true }
 function Wait-Close { if (-not $NoPause) { Read-Host "Press Enter to close" | Out-Null } }
 function Say($m, $c = "Gray") { if (-not $Quiet) { Write-Host $m -ForegroundColor $c } }
@@ -111,6 +111,7 @@ if (-not $Offline) {
         $inst = Get-ChildItem -Path $tmp -Recurse -Filter install.ps1 | Select-Object -First 1
         $args2 = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $inst.FullName, "-Game", $Game, "-Offline", "-NoPause")
         if ($Quiet) { $args2 += "-Quiet" }
+        if ($NoProAI) { $args2 += "-NoProAI" }
         & powershell @args2
         $code = $LASTEXITCODE
       } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
@@ -134,6 +135,38 @@ Move-Item "$Exe.tmp" $Exe -Force
 
 New-Item -ItemType Directory -Force -Path $Home_ | Out-Null
 Set-Content -Path "$Home_\game.txt" -Value $Game
+
+# Every Pro AI model in the game's own catalog (ProAI\catalog.json), the ones not there yet, each
+# checked against the catalog's sha256 before it is put in place. A failure only warns.
+$Cat = Join-Path $Game "ProAI\catalog.json"
+if (-not $NoProAI -and (Test-Path $Cat)) {
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = "SilentlyContinue"
+    $models = (Get-Content $Cat -Raw | ConvertFrom-Json).models
+    $miss = @($models | Where-Object { -not (Test-Path (Join-Path $Game "ProAI\$($_.file)")) })
+    if ($miss.Count -eq 0) { Say "`nPro AI models: all $($models.Count) already here." }
+    else {
+      $mb = [math]::Round((($miss | Measure-Object -Property size -Sum).Sum) / 1MB)
+      Say "`nPro AI models (the AI takeover's pro AIs): $($miss.Count) to download, $mb MB..."
+      $i = 0; $bad = 0
+      foreach ($m in $miss) {
+        $i++
+        $dst = Join-Path $Game "ProAI\$($m.file)"; $tmp = "$dst.part"
+        try {
+          Invoke-WebRequest -Uri $m.source -OutFile $tmp -UseBasicParsing -UserAgent "vbx-installer"
+          if ((Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower() -ne $m.sha256) { throw "checksum mismatch" }
+          Move-Item $tmp $dst -Force
+          Say "  [$i/$($miss.Count)] $($m.file)"
+        } catch {
+          $bad++; Say "  [$i/$($miss.Count)] $($m.file) FAILED ($($_.Exception.Message))" Yellow
+          Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+      }
+      if ($bad) { Say "Some Pro AI models did not download; run install.bat again later." Yellow }
+    }
+  } catch { Say "Pro AI models: skipped ($($_.Exception.Message))" Yellow }
+}
 Say "`nInstalled $Tag on game $Installed. Start the game, then F1 > Game > Vooby Mods." Green
 Say "To update later (also after the game updates itself), run install.bat again."
 Wait-Close
