@@ -2810,10 +2810,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..02d2e3d
+index 0000000..64da9b6
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2678 @@
+@@ -0,0 +1,2691 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -2958,7 +2958,8 @@ index 0000000..02d2e3d
 +     "On: any fighter on the ground that could jump (standing, walking, dashing, running,\n"
 +     "crouching, landing, in shield) wavedashes when you press R: X, then your R as you leave the\n"
 +     "ground, on the exact frame for that fighter. Toward the side you hold the stick, at its angle\n"
-+     "when angled down, held flat the max-length one; with the stick in the middle, in place.\n"
++     "when angled down, held flat the max-length one; with the stick in the middle, in place;\n"
++     "with the stick straight down, R is yours: a spot dodge.\n"
 +     "R never shields on the ground (L does): pressed in landing lag or the end of a move it\n"
 +     "waits and wavedashes as soon as you can jump. In the air R is unchanged (air dodge).\n"
 +     "Jump first, then R inside the jumpsquat: the dodge goes on your first airborne frame.\n"
@@ -3198,6 +3199,7 @@ index 0000000..02d2e3d
 +  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
++  bool gwd_spot = false;                // one-button wavedash: this R is a spot dodge (stick down), theirs while held
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
 +  int hj_held = 0, hj_t = 0;            // hold A to jab: frames A held in a jab, pulse clock
 +  bool oos_nayru = false;               // the shield B is Zelda's Nayru's Love
@@ -4264,6 +4266,7 @@ index 0000000..02d2e3d
 +}
 +
 +bool slow_walk_gains(int32_t kind);   // below, with the slow walk
++constexpr int kSpotDodgeY = 56;   // 0.70 down: past the shield's spot dodge line with room
 +void ground_wavedash(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
 +                     bool jumping, int delay, float facing, bool may_start = true) {
 +  const Trig sel = trig_sel(GroundWavedash);
@@ -4400,6 +4403,16 @@ index 0000000..02d2e3d
 +      const bool pushed = pad.stick_x >= kStickSide || pad.stick_x <= -kStickSide || pad.stick_y <= -kStickSide;
 +      if (pushed) { st.gsh_wait = 0; hide_r(); return; }
 +    }
++    return;
++  }
++  // R with the stick held straight down (TSC 11-13: "i cant spot dodge with r anymore"): theirs, so
++  // the shield and the down make a spot dodge (in place, the wavedash goes with the stick in the
++  // middle). Their R stays theirs while held.
++  if (st.gwd_spot) { if (r) return; st.gwd_spot = false; }
++  if (may_start && r && !r_was && ground && !jumping && pad.stick_y <= -kSpotDodgeY &&
++      std::abs((int)pad.stick_x) < kStickSide) {
++    st.gwd_spot = true; st.gwd_pending = -1;
++    host::log("padmods: R with the stick down: spot dodge (your R)");
 +    return;
 +  }
 +  // Their own wavedash (TSC 11-06: "if I'm already in jumpsquat the auto wavedash don't work"): an R
@@ -5807,10 +5820,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..7c6e361
+index 0000000..5519ac6
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1345 @@
+@@ -0,0 +1,1354 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -7151,6 +7164,15 @@ index 0000000..7c6e361
 +    CHECK(pad4({rb}).button & rb);
 +    idle(30); view.slot_live[1] = 0; view.port_slot[3] = 0;
 +  }
++
++  // ---- One-button wavedash: R with the stick straight down is theirs (a spot dodge) ----
++  only(pad_mods::GroundWavedash);
++  fighter(3, kFox, kWait, 0); idle(30);
++  { host::PadState p = pad4({kR, 0, -80}); CHECK((p.button & kR) && !(p.button & (kX | kY))); }
++  for (int f = 0; f < 6; ++f) { host::PadState p = pad4({kR, 0, -80}); CHECK((p.button & kR) && !(p.button & (kX | kY))); }
++  idle(30);
++  { host::PadState p = pad4({kR, 0, 0}); CHECK(!(p.button & kR) && (p.button & (kX | kY))); }   // middle: the wavedash
++  idle(45);
 +
 +  CHECK(range_violations == 0);
 +  std::puts("pad_mods: ok");
