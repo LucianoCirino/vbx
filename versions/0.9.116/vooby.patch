@@ -2810,10 +2810,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..64da9b6
+index 0000000..dbe4aa3
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2691 @@
+@@ -0,0 +1,2706 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3199,11 +3199,13 @@ index 0000000..64da9b6
 +  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
++  int air_age = 1000;                   // frames since the fighter was last on the ground
 +  bool gwd_spot = false;                // one-button wavedash: this R is a spot dodge (stick down), theirs while held
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
 +  int hj_held = 0, hj_t = 0;            // hold A to jab: frames A held in a jab, pulse clock
 +  bool oos_nayru = false;               // the shield B is Zelda's Nayru's Love
 +  int ut_frame = -1;                    // up-tilt button: frames since its press (-1 none)
++  int ld_late_dodge = 0;                // frames left of an air dodge pressed for them (a tap kept back)
 +  int ld_prewait = -1;                  // ledgedash pressed while falling past the edge: frames waited for the grab
 +  bool ld_handoff = false;              // an R wavedash that met a fall instead of a jump: its press is the ledgedash's
 +  float px = 0, py = 0;                 // the fighter's position (the host's view)
@@ -4641,6 +4643,7 @@ index 0000000..64da9b6
 +  if (y == kWavedashY) dx = kWavedashX * face;
 +}
 +constexpr int32_t kCliffCatch = 0xFC, kCliffWait = 0xFD;
++constexpr int kSlidOffFrames = 12;   // frames after leaving the ground the ledge grab may still come (lab: 9)
 +float g_stage_edge = 0.0f;   // the stage's main ledge |x| (0 not known), from the host's view
 +constexpr int kLedgeDropStick = 23;        // 0.2875 of the rim: a stick component that counts as pushed
 +constexpr int kLedgeSelfDropWindow = 12;
@@ -4758,8 +4761,9 @@ index 0000000..64da9b6
 +      host::log("padmods: ledgedash on your own drop %d frame(s) ago (kind %d, air dodge on frame %d)", age, kind - 1, at);
 +      return ledge_dash(o, st, pad, fighter, kind, facing, delay);
 +    }
-+    host::log("padmods: trigger %d frames after your ledge drop: kept back (no air dodge)", age);
-+    st.ld_swallow = true;
++    // Later than a ledgedash: their air dodge (TSC 11-13: "when im in air R should always air dodge").
++    host::log("padmods: trigger %d frames after your ledge drop: your air dodge", age);
++    return false;
 +  }
 +  // Slid or walked off the stage's edge (a friend 11-10: "if you wavedash back to the ledge and push
 +  // the ledgedash button it makes u airdodge"; lab: Fox on FD, wavedash back, 43x10 14x5 29x9 then
@@ -4769,22 +4773,32 @@ index 0000000..64da9b6
 +  // off a platform keeps its air dodge.
 +  const bool handoff = st.ld_handoff;
 +  st.ld_handoff = false;
++  // TSC 11-13 "when im in air R should always air dodge": only in the moment right after leaving the
++  // ground (slid or walked off: the grab is a few frames away), never recovering from offstage; and
++  // with no grab it goes in as their air dodge, not kept back.
 +  if (st.ld_frame < 0 && st.ld_prewait < 0 && st.ld_wait < 0 && !st.ld_swallow && r && (!r_was || handoff) && fighter &&
++      (handoff || st.air_age <= kSlidOffFrames) && facing * st.px < 0.0f &&   // facing the stage: a grab can come
 +      fighter->ground_or_air == 1 && fighter->motion_id >= 29 && fighter->motion_id <= 34 &&
 +      g_stage_edge > 0.0f && std::fabs(st.px) >= g_stage_edge - 1.0f && st.py > -40.0f && st.py < 15.0f && at_any(kind)) {
 +    st.ld_prewait = 0;
 +    host::log("padmods: ledgedash pressed falling past the edge (x %.1f): waiting for the grab", st.px);
 +  }
++  if (st.ld_late_dodge > 0) { --st.ld_late_dodge; o.add |= sel.r ? kPadR : kPadL; return true; }
 +  if (st.ld_prewait >= 0) {
 +    hide_r();
 +    if (fighter && (fighter->motion_id == kCliffCatch || fighter->motion_id == kCliffWait)) {
 +      st.ld_prewait = -1;
 +      st.ld_wait = 0;   // as a press during the grab: the ledgedash once hanging (below)
-+    } else if (++st.ld_prewait > 20 || !fighter || fighter->ground_or_air == 0) {
-+      host::log("padmods: no ledge grab after the press: kept back (no air dodge)");
++    } else if (!fighter || fighter->ground_or_air == 0) {   // landed instead: nothing
 +      st.ld_prewait = -1;
 +      st.ld_swallow = true;
 +      return true;
++    } else if (++st.ld_prewait > kSlidOffFrames) {   // no grab: their air dodge now
++      host::log("padmods: no ledge grab after the press: your air dodge");
++      st.ld_prewait = -1;
++      st.gwd_r_hidden = false;
++      if (!r) { st.ld_late_dodge = 2; o.add |= sel.r ? kPadR : kPadL; }   // a tap already let go: pressed for them
++      return !r;
 +    } else {
 +      return true;
 +    }
@@ -5327,6 +5341,7 @@ index 0000000..64da9b6
 +    const float facing = fighter ? (online ? local_facing : view.facing[p]) : 0.0f;
 +    float vel_x = 0.0f;
 +    if (fighter) for (int i = 0; i < 4; ++i) if (&view.port[i] == fighter) { vel_x = view.vel_x[i]; st.px = view.pos_x[i]; st.py = view.pos_y[i]; }
++    if (fighter) st.air_age = fighter->ground_or_air ? std::min(st.air_age + 1, 1000) : 0;
 +    g_stage_edge = view.stage_edge_x;
 +    const bool up = pad.sub_y >= kCStickUpPress;
 +    Out& o = st.out;
@@ -5820,7 +5835,7 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..5519ac6
+index 0000000..68db8ce
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
 @@ -0,0 +1,1354 @@
@@ -6804,8 +6819,8 @@ index 0000000..5519ac6
 +    CHECK(own > 2);
 +    CHECK(dodge_from_drop(1) == own);
 +    CHECK(dodge_from_drop(2) == own);
-+    CHECK(dodge_from_drop(5) == -1);
-+    CHECK(dodge_from_drop(12) == -1);
++    CHECK(dodge_from_drop(5) == 5);     // later than a ledgedash: their air dodge (TSC 11-13)
++    CHECK(dodge_from_drop(12) == 12);
 +    view.facing[3] = 0.0f;
 +  }
 +  // A fighter not measured yet: R on the ledge does nothing at all.
