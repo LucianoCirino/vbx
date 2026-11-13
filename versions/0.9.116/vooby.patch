@@ -2783,10 +2783,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..d45d572
+index 0000000..02d2e3d
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2670 @@
+@@ -0,0 +1,2678 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3600,6 +3600,11 @@ index 0000000..d45d572
 +// over the stage and lands on it: it has to fall first, a wait of 18..21 frames regrabbed 6 in a row
 +// (24 fell short). 19.
 +constexpr int kStallWaitGanon = 19;
++// Falco (TSC 11-13 "falco up b stall dont work"): he hangs 2 lower than Fox and his startup sinks,
++// never back in reach: each stall was the whole Fire Bird and a fall, 104..112 frames. With a double
++// jump after the drop and the up-B 0..2 frames after it, the startup sinks back onto the ledge: 11 in
++// a row at 39 frames (0) or 45 (2); 4 and later miss. 1.
++constexpr int kStallWaitFalco = 1;
 +bool ledge_stall(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
 +                 int delay) {
 +  const bool b = (pad.button & kPadB) != 0;
@@ -3608,11 +3613,14 @@ index 0000000..d45d572
 +  if (st.us_frame >= 0) {
 +    const int f = st.us_frame++;
 +    static const int test_w = std::getenv("MU_TEST_STALL_W") ? std::atoi(std::getenv("MU_TEST_STALL_W")) : -1;   // tests
-+    const int w = test_w >= 0 ? test_w : (kind == 0x19 + 1 ? kStallWaitGanon : 0);   // frames falling before the up-B
++    const int w = test_w >= 0 ? test_w : (kind == 0x19 + 1 ? kStallWaitGanon : kind == kKindFalco ? kStallWaitFalco : 0);   // frames falling before the up-B
 +    o.remove |= kPadB;
 +    o.set_stick = true; o.sx = 0; o.sy = 0;
++    static const bool test_jump = std::getenv("MU_TEST_STALL_JUMP") != nullptr;   // tests
++    const bool jump = test_jump || kind == kKindFalco;   // a double jump between the drop and the up-B (Falco)
 +    if (f == 1) o.sy = -80;                                 // the drop
-+    else if (f >= 2 + w && f <= 4 + w) { o.add |= kPadB; o.sy = 80; }   // the up-B, straight up
++    else if (jump && f == 2) o.add |= jump_bit(LedgeStall);
++    else if (f >= 2 + w + (jump ? 1 : 0) && f <= 4 + w + (jump ? 1 : 0)) { o.add |= kPadB; o.sy = 80; }   // the up-B, straight up
 +    else if (f == 5 + w) o.sy = 80;
 +    else if (f > delay + 6 + w && fighter && fighter->motion_id == 0xFD /* CliffWait */) st.us_frame = -1;   // back: the next one
 +    if (f > 5 + w && kind == 0x07 + 1) o.set_stick = false;   // Sheik: their stick aims the Vanish (TSC 11-12)
