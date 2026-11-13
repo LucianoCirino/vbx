@@ -38,10 +38,10 @@ index b28da70..a75f086 100644
  
  The game's Tournament Melee entry opens a native **20XX TE Settings** menu. Use the stick
 diff --git a/port/CMakeLists.txt b/port/CMakeLists.txt
-index 812306e..2f2a056 100644
+index 275de45..8930fb6 100644
 --- a/port/CMakeLists.txt
 +++ b/port/CMakeLists.txt
-@@ -584,6 +584,12 @@ target_compile_features(port_lcancel_indicator_test PRIVATE cxx_std_17)
+@@ -589,6 +589,12 @@ target_compile_features(port_lcancel_indicator_test PRIVATE cxx_std_17)
  target_compile_options(port_lcancel_indicator_test PRIVATE /EHsc)
  target_compile_definitions(port_lcancel_indicator_test PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
  add_test(NAME port_lcancel_indicator COMMAND port_lcancel_indicator_test)
@@ -55,10 +55,10 @@ index 812306e..2f2a056 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index 708019e..6af045d 100644
+index d399410..c4c9d30 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
-@@ -58,8 +58,10 @@
+@@ -59,8 +59,10 @@
  #include "render_options.h"
  #include "training_overlay.h"
  #include "ghost_ai.h"
@@ -69,7 +69,7 @@ index 708019e..6af045d 100644
  #include "offline_input_delay.h"
  #include "disc_archive.h"
  #include "user_gecko.h"
-@@ -70,6 +72,7 @@
+@@ -71,6 +73,7 @@
  #include "native_savestate.h"
  #include "lab_view.h"
  #include "../runtime/abi/mu_look_snapshot.h"
@@ -77,7 +77,7 @@ index 708019e..6af045d 100644
  // Both builds: the neutral netplay state. In the build without the Slippi layer it also answers the
  // Slippi names; in the normal build a peer-to-peer session (--p2p-*) is found through it.
  #include "netplay_state.h"
-@@ -1330,9 +1333,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1380,9 +1383,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
    {
      char dll_path[MAX_PATH] = {};
      HMODULE module = GetModuleHandleA(g_dll.c_str());
@@ -108,7 +108,7 @@ index 708019e..6af045d 100644
        std::ifstream in(path);
        // The offsets are right only for the library they were read from: a file from another build
        // (a library copied without it) left the wrong memory out and restored the sound driver's on
-@@ -1349,7 +1371,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1399,7 +1421,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          if (std::sscanf(line.c_str(), "# dll_size %llu", &value) == 1) { other_build = value != dll_size; continue; }
          unsigned long long offset = 0, size = 0;
          if (std::sscanf(line.c_str(), "%llx %llx", &offset, &size) == 2 && size) {
@@ -117,7 +117,7 @@ index 708019e..6af045d 100644
            bytes += size;
          }
        }
-@@ -1359,7 +1381,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1409,7 +1431,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          host::log("online: WARNING: %s missing; sound driver state is inside snapshots", path.c_str());
        else {
          exclusions.insert(exclusions.end(), sound.begin(), sound.end());
@@ -127,7 +127,7 @@ index 708019e..6af045d 100644
        }
      }
    }
-@@ -2195,6 +2218,7 @@ int32_t h_vi_idle_step() {
+@@ -2245,6 +2268,7 @@ int32_t h_vi_idle_step() {
  // --online-test ranked, once a frame (the game reads its pads every frame, in every scene). A game
  // that ended and is not back in Debug VS's match scene within 5 s (a results screen waiting for a
  // press) is asked back into it for the set's next game; once the set's room has closed the run ends.
@@ -135,7 +135,7 @@ index 708019e..6af045d 100644
  void ranked_harness_tick() {
    if (g_online_test_mode != 0 || !g_online_test_started) return;
    RankedHarness& h = g_ranked_harness;
-@@ -2230,6 +2254,60 @@ void ranked_harness_tick() {
+@@ -2280,6 +2304,68 @@ void ranked_harness_tick() {
    host::log("online test: ranked, back to the match scene for the next game (from major %d state %d)", scene[0], scene[1]);
  }
  
@@ -163,6 +163,7 @@ index 708019e..6af045d 100644
 +    if (const int32_t st = g_vooby_stage_file.load()) mu_pc_stage_ledge(st, &lx, &ly);
 +    out->stage_edge_x = lx > 0.0f && lx < 1000.0f ? lx : 0.0f;
 +  }
++  for (int p = 0; p < 4; ++p) out->port_slot[p] = online ? raw.port[p].slot : -1;
 +  for (int p = 0; p < 4; ++p) {
 +    const MuLcancelFighter& f = raw.port[p];
 +    if (!f.present || f.slot < 0 || f.slot > 3) continue;
@@ -187,6 +188,13 @@ index 708019e..6af045d 100644
 +    float px = 0.0f, py = 0.0f;
 +    if (pod.player[f.slot].present) { std::memcpy(&px, &pod.player[f.slot].pos_x, 4); std::memcpy(&py, &pod.player[f.slot].pos_y, 4); }
 +    out->pos_x[port] = px; out->pos_y[port] = py;
++    out->port_slot[port] = f.slot;
++  }
++  for (int s = 0; s < 4; ++s) {   // every fighter, CPUs too (auto rest)
++    const MuFighterState& q = pod.player[s];
++    out->slot_live[s] = q.present && q.stocks > 0;
++    std::memcpy(&out->slot_x[s], &q.pos_x, 4); std::memcpy(&out->slot_y[s], &q.pos_y, 4);
++    out->slot_team[s] = ai_takeover::team_of(s);
 +  }
 +}
 +
@@ -196,7 +204,7 @@ index 708019e..6af045d 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2257,6 +2335,91 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2307,6 +2393,92 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
@@ -280,15 +288,16 @@ index 708019e..6af045d 100644
 +    if (p.present) {
 +      float fr, x, vx; std::memcpy(&fr, &p.anim_frame, 4); std::memcpy(&x, &p.pos_x, 4); std::memcpy(&vx, &p.vel_x, 4);
 +      float x1 = 0; std::memcpy(&x1, &pod.player[1].pos_x, 4);
-+      host::log("jab: act %u frame %.0f A %d B %d sx %d x %.2f vx %.3f x1 %.2f", (unsigned)p.action, fr, (int)((pads[0].button & 0x100) != 0),
-+                (int)((pads[0].button & 0x200) != 0), (int)pads[0].stick_x, x, vx, x1);
++      float y = 0, y1 = 0, pc1 = 0; std::memcpy(&y, &p.pos_y, 4); std::memcpy(&y1, &pod.player[1].pos_y, 4); std::memcpy(&pc1, &pod.player[1].percent, 4);
++      host::log("jab: act %u frame %.0f A %d B %d sx %d x %.2f vx %.3f x1 %.2f y %.2f y1 %.2f pct1 %.1f", (unsigned)p.action, fr, (int)((pads[0].button & 0x100) != 0),
++                (int)((pads[0].button & 0x200) != 0), (int)pads[0].stick_x, x, vx, x1, y, y1, pc1);
 +    }
 +  }
 +  host::input_show_pads(pads);   // the controller overlay shows the mods' presses as the player's
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -2344,10 +2507,19 @@ bool native_online_mode() {
+@@ -2395,10 +2567,19 @@ bool native_online_mode() {
    int32_t scene[2] = {0, 0};
    return g_game.practice(MU_PRACTICE_SCENE, scene, 2) == 0 && scene[0] == 8;
  }
@@ -308,7 +317,7 @@ index 708019e..6af045d 100644
    auto it = g_paths.find(p);
    if (it != g_paths.end() && g_retail_view) {
      // The retail copy, or -1 for a file the retail game does not have. A pack costume that only
-@@ -3307,6 +3479,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+@@ -3358,6 +3539,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
  }
  
  void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
@@ -316,7 +325,7 @@ index 708019e..6af045d 100644
  #ifdef YOUGAME_AGENT_TEST_HOOK
    if (command == 0x36)
      g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
-@@ -4162,7 +4335,7 @@ int run(void (*shutdown)(int)) {
+@@ -4213,7 +4395,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -376,10 +385,10 @@ index 7d23aeb..4bb4942 100644
    if (g_pointer_rested) visible = false;
    show_cursor(visible);
 diff --git a/port/runtime/abi/mu_lcancel_view.h b/port/runtime/abi/mu_lcancel_view.h
-index 8b1b559..f7f81f7 100644
+index 8b1b559..16fda9f 100644
 --- a/port/runtime/abi/mu_lcancel_view.h
 +++ b/port/runtime/abi/mu_lcancel_view.h
-@@ -30,6 +30,17 @@ typedef struct MuLcancelView {
+@@ -30,6 +30,23 @@ typedef struct MuLcancelView {
      float trigger_deadzone;                                /* ftCommonData analog_shoulder_deadzone */
      MuLcancelS32 lcancel_window;                           /* ftCommonData xE4 */
      MuLcancelFighter port[4];
@@ -394,11 +403,17 @@ index 8b1b559..f7f81f7 100644
 +     * stage not known), filled by the host for Vooby Mods' ledgedash. */
 +    float pos_x[4], pos_y[4];
 +    float stage_edge_x;
++    /* Every fighter by player slot 0-3 (CPUs too), filled by the host for Vooby Mods' auto rest:
++     * in the match with stocks left, position, team (-1 no teams), and each port's own slot (-1). */
++    MuLcancelS32 slot_live[4];
++    float slot_x[4], slot_y[4];
++    MuLcancelS32 slot_team[4];
++    MuLcancelS32 port_slot[4];
  } MuLcancelView;
  
  #endif
 diff --git a/port/runtime/gx/pc_settings.cpp b/port/runtime/gx/pc_settings.cpp
-index bf5cb95..36b6fe4 100644
+index 6dcb9c0..91d41fb 100644
 --- a/port/runtime/gx/pc_settings.cpp
 +++ b/port/runtime/gx/pc_settings.cpp
 @@ -52,6 +52,11 @@
@@ -510,7 +525,7 @@ index bf5cb95..36b6fe4 100644
  static void draw_player_nicknames() {
    if (!g_hud_match) return;
    const OverlayBounds bounds = overlay_bounds();
-@@ -737,7 +818,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
+@@ -749,7 +830,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
  // while the settings panel is open, which is when the overlay may be dragged and resized.
  static void draw_input_overlay(int port, int row, bool lone, bool editable, bool borderless, bool values, int knob) {
    host::PadState pads[4]{};
@@ -519,7 +534,7 @@ index bf5cb95..36b6fe4 100644
    int slot = port < 0 || port > 3 ? 0 : port;
    // An adapter socket the player is not using reports nothing, and the overlay then drew an empty
    // controller with no hint why. With a single port selected, show the first one that has a device
-@@ -2376,6 +2457,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
+@@ -2388,6 +2469,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
        else if (key == "lcancel_flash_mode") saved_lcancel_flash = std::clamp(std::stoi(value), 0, 6);
        else if (key == "lcancel_success_flash") saved_lcancel_success = std::clamp(std::stoi(value), 0, 2);
        else if (key == "autolcancel") lcancel::set_automatic(value == "1");
@@ -541,7 +556,7 @@ index bf5cb95..36b6fe4 100644
        else if (key == "palstockicons") gecko::option_pal_stock_icons = value == "1";
        else if (key == "noscreenshake") gecko::option_no_screen_shake = value == "1";
        else if (key == "screenshake") gecko::option_screen_shake_percent = std::clamp(std::stoi(value), 0, 200);
-@@ -2779,6 +2875,8 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
+@@ -2791,6 +2887,8 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
  
  #include "ui_sources/gd_melee/text.inl"
  #include "pc_settings_visuals.inl"
@@ -550,7 +565,7 @@ index bf5cb95..36b6fe4 100644
  
  // A change that applies at the next start (a mod look, an audio driver, a graphics backend): a button
  // that saves the settings and restarts the game, instead of the player closing and reopening it. The
-@@ -4447,7 +4545,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
+@@ -4459,7 +4557,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
         << "\nlcancel_flash_mode " << mu_lcancel_flash_mode(options.te_options2, lcancel::flash_mode())
         << "\nlcancel_success_flash " << mu_lcancel_success_color(options.te_options2)
         << "\nlcancelindicator " << (lcancel::indicator_enabled() ? 1 : 0)
@@ -576,7 +591,7 @@ index bf5cb95..36b6fe4 100644
         << "\npalstockicons " << (gecko::option_pal_stock_icons ? 1 : 0)
         << "\nnoscreenshake " << (gecko::option_no_screen_shake ? 1 : 0)
         << "\nscreenshake " << gecko::option_screen_shake_percent
-@@ -5099,6 +5214,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5111,6 +5226,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      else if (const char* tab = host::test_env::getenv("MELEE_TEST_SETTINGS_TAB"))
        state.active_tab = std::clamp(std::atoi(tab), 0, 7);
      if (test_menu_style() >= 0) options.overlay_style = test_menu_style();
@@ -585,7 +600,7 @@ index bf5cb95..36b6fe4 100644
    }
    const auto reset_settings_home = [&state](const char* why) {
      if (g_ui_diag) host::log("ui diag: settings reset to home (%s), tab %d", why, state.active_tab);
-@@ -5116,6 +5233,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5128,6 +5245,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      state.practice_open = false;
      reset_settings_home("guest Options row");
    }
@@ -596,7 +611,7 @@ index bf5cb95..36b6fe4 100644
    if (host::window_take_settings_toggle()) {
      if (state.legacy_presentation) {
        options.overlay_style = state.legacy_saved_appearance;
-@@ -9378,7 +9499,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9390,7 +9511,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        ImGui::EndDisabled();
        if (ranked) settings_hint(lcancel::policy::ranked_hint);
        if (host::gameplay::vanilla_only()) settings_hint("Disabled for this vanilla-only session.");
@@ -606,7 +621,7 @@ index bf5cb95..36b6fe4 100644
  #ifdef MELEE_NO_SLIPPI   // this build's matches are all the one kind, where it works
        settings_hint("(NOTE: Works offline and in online matches)");
        if (automatic) {
-@@ -9397,6 +9519,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9409,6 +9531,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        }
      }
  
@@ -623,7 +638,7 @@ index bf5cb95..36b6fe4 100644
      // ---- HUD ----
      // A port code compiled into the game (recomp/gecko.py PORT_CODES): the stock row drawn at PAL's
      // size and height. Display only, read when the HUD is built, so it applies from the next match.
-@@ -10949,7 +11081,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -10971,7 +11103,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
    if (!state.fill_window && !state.open && !state.menu_open && options.show_player_nicknames)
      draw_player_nicknames();
    if (!state.fill_window && !state.open && !state.menu_open) draw_combo_counter();
@@ -2115,10 +2130,10 @@ index b4ae200..0986f8c 100644
    host::log("slippi: opponent found (decider: %d)", is_host_);
  }
 diff --git a/port/runtime/hle/slippi_online.cpp b/port/runtime/hle/slippi_online.cpp
-index d7bd9f4..2217612 100644
+index 96038ae..52ce2e8 100644
 --- a/port/runtime/hle/slippi_online.cpp
 +++ b/port/runtime/hle/slippi_online.cpp
-@@ -1508,6 +1508,7 @@ void handle_get_player_settings(std::vector<uint8_t>& q) {
+@@ -1514,6 +1514,7 @@ void handle_get_player_settings(std::vector<uint8_t>& q) {
  }  // namespace
  
  Config& config() { return g_config; }
@@ -2141,10 +2156,10 @@ index 06c151b..d9fd254 100644
  // True while the game is polling the online menus (mode select, the online character select screen,
 diff --git a/port/runtime/host/ai_takeover.cpp b/port/runtime/host/ai_takeover.cpp
 new file mode 100644
-index 0000000..66fce1c
+index 0000000..afa709c
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.cpp
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,411 @@
 +// Vooby Mods' AI takeover: see ai_takeover.h.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ai_takeover.h"
@@ -2267,6 +2282,11 @@ index 0000000..66fce1c
 +}
 +
 +}  // namespace
++
++int team_of(int slot) {
++  std::lock_guard<std::mutex> lock(g_mu);
++  return g_teams && slot >= 0 && slot < 4 ? g_team[slot] : -1;
++}
 +
 +void note_event(uint8_t command, const uint8_t* p, uint32_t size) {
 +  std::lock_guard<std::mutex> lock(g_mu);
@@ -2553,10 +2573,10 @@ index 0000000..66fce1c
 +}
 diff --git a/port/runtime/host/ai_takeover.h b/port/runtime/host/ai_takeover.h
 new file mode 100644
-index 0000000..7d15965
+index 0000000..e2dc343
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.h
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,49 @@
 +// Vooby Mods' AI takeover (pad_mods.h AiTakeover): an AI plays a player's fighter by writing that
 +// controller's pad, the same way every other Vooby Mod adds presses, so the game library is the
 +// release's own and nothing inside the match changes (a library built here would desync online).
@@ -2598,6 +2618,8 @@ index 0000000..7d15965
 +// The player slot the AI on controller `port` is after (-1 none), for the target marker.
 +int target_slot(int port);
 +int slot_of_port(int port);
++// The team of a player slot in a teams match (from the replay's Game Start), -1 otherwise.
++int team_of(int slot);
 +int port_of_slot(int slot);
 +// The controller an AI holds this frame for the fighter on controller `port`. False: nothing to
 +// play (no match, no fighter on that port yet); the player's own pad stays.
@@ -2605,10 +2627,10 @@ index 0000000..7d15965
 +
 +}  // namespace ai_takeover
 diff --git a/port/runtime/host/host.h b/port/runtime/host/host.h
-index 07a1ceb..ca81d75 100644
+index 248eccd..ba86e78 100644
 --- a/port/runtime/host/host.h
 +++ b/port/runtime/host/host.h
-@@ -297,6 +297,11 @@ void input_script_peek(uint32_t retrace, PadState out[4]);
+@@ -304,6 +304,11 @@ void input_script_peek(uint32_t retrace, PadState out[4]);
  void input_note_pad_frame(int32_t frame);
  // The state the game read on the last PADRead, for the on-screen controller overlay.
  void input_last_pads(PadState out[4]);
@@ -2753,10 +2775,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..a8c7a7b
+index 0000000..429c167
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2526 @@
+@@ -0,0 +1,2573 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3011,6 +3033,12 @@ index 0000000..a8c7a7b
 +     "jab combo and the rapid jab keep going until you let go of A. A quick tap is one jab as\n"
 +     "before. Any fighter but Captain Falcon (his would always turn into the rapid jab).\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
++    {"padmod_jiggly_rest", "Auto rest", "Jigglypuff: hold the button you do not jump with and she rests the moment an opponent is in range.",
++     "On: as Jigglypuff, hold the X/Y button you do not jump with (Options: I jump with Y). While it\n"
++     "is held, the moment the nearest opponent is close enough for Rest to hit, the mod puts in down-B\n"
++     "(again every other frame until she can act). Let go and the button does nothing. Range measured\n"
++     "in the game (Rest's own hitbox, with a margin); Teams: only the other team counts.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},
 +};
 +
 +static_assert(sizeof kInfo / sizeof kInfo[0] == kCount, "one kInfo row per Mod, in enum order");
@@ -3121,6 +3149,8 @@ index 0000000..a8c7a7b
 +  int gj_motion = -1, gj_presses = 0;   // Falcon's gentleman: the jab seen, A presses let in during it
 +  bool gj_hold = false, gj_hide = false;   // A kept down to the third hit; an extra press kept back until let go
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
++  int jr_t = 0;                         // auto rest: B pulse clock
++  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
 +  int hj_held = 0, hj_t = 0;            // hold A to jab: frames A held in a jab, pulse clock
 +  bool oos_nayru = false;               // the shield B is Zelda's Nayru's Love
@@ -3267,7 +3297,7 @@ index 0000000..a8c7a7b
 +// One jump button for every mod (Options, "I jump with Y"); the up-tilt button is the other one.
 +uint16_t jump_bit(int mod) {
 +  bool y = g_on[JumpWithY].load(std::memory_order_relaxed);
-+  if (mod == UpTiltButton) y = !y;
++  if (mod == UpTiltButton || mod == JigglyRest) y = !y;
 +  return y ? kPadY : kPadX;
 +}
 +
@@ -3639,6 +3669,27 @@ index 0000000..a8c7a7b
 +  // crouch first, softly: a full press down on a platform drops through it (lab 11-10, Fox on Stadium's)
 +  if (m == 20 || m == 21 || m == 22 || m == kRunBrake) { o.set_stick = true; o.sx = 0; o.sy = (int8_t)(-56 - test_sy); }
 +  if (f > 30 + delay || !fighter || fighter->ground_or_air != 0) st.ut_frame = -1;   // never got there: given up
++  return true;
++}
++
++// ---- Jigglypuff: the free X/Y button held = Rest when an opponent is in range (JigglyRest)
++// Positions are the fighters' TopN (feet). The range is the box measured in the lab (Training, a
++// standing Marth CPU): dx, dy from Jigglypuff to the opponent.
++constexpr int32_t kKindPuff = 0x0F + 1;
++// Lab 11-12 (Training on Final Destination, a standing Marth CPU, read on Rest's first frame): hits
++// at 0.3..5.1 sideways on the ground and from a hop (with the opponent's feet up to 5.2 below hers),
++// misses from 5.6 on. 4.5 leaves the hitboxes a margin of overlap.
++float g_rest_rx = 4.5f, g_rest_down = -6.0f, g_rest_up = 4.0f;
++bool jiggly_rest(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter) {
++  static const bool test_log = std::getenv("MU_TEST_REST_LOG") != nullptr;
++  if (static const char* rx = std::getenv("MU_TEST_REST_RX"); rx) g_rest_rx = (float)std::atof(rx);   // tests
++  o.remove |= jump_bit(JigglyRest);
++  if (!fighter || !st.opp_ok) { st.jr_t = 0; return true; }
++  if (test_log) host::log("rest: dx %.2f dy %.2f motion %d", st.opp_dx, st.opp_dy, (int)fighter->motion_id);
++  if (std::fabs(st.opp_dx) > g_rest_rx || st.opp_dy < g_rest_down || st.opp_dy > g_rest_up) { st.jr_t = 0; return true; }
++  if (st.jr_t == 0) host::log("padmods: auto rest, opponent at (%.1f, %.1f)", st.opp_dx, st.opp_dy);
++  o.set_stick = true; o.sx = 0; o.sy = -80;
++  if ((st.jr_t++ & 1) == 0) o.add |= kPadB; else o.remove |= kPadB;
 +  return true;
 +}
 +
@@ -5128,7 +5179,24 @@ index 0000000..a8c7a7b
 +    const bool up = pad.sub_y >= kCStickUpPress;
 +    Out& o = st.out;
 +    o = Out{};
-+    if (enabled(UpTiltButton)) {   // first: a press it takes is no jump for the other mods
++    st.opp_ok = false;
++    if (fighter) {   // the nearest live opponent (any slot, CPUs too; Teams: the other team)
++      int me = view.port_slot[p];
++      if (me < 0) for (int i = 0; i < 4; ++i) if (&view.port[i] == fighter) me = view.port[i].slot;
++      float best = 1e9f;
++      for (int s = 0; s < 4; ++s) {
++        if (s == me || !view.slot_live[s]) continue;
++        if (me >= 0 && me < 4 && view.slot_team[s] >= 0 && view.slot_team[s] == view.slot_team[me]) continue;
++        const float dx = view.slot_x[s] - st.px, dy = view.slot_y[s] - st.py, d = dx * dx + dy * dy;
++        if (d < best) { best = d; st.opp_dx = dx; st.opp_dy = dy; st.opp_ok = true; }
++      }
++    }
++    const bool rest_held = enabled(JigglyRest) && kind == kKindPuff && (pad.button & jump_bit(JigglyRest));
++    if (rest_held) {   // the same button as the up-tilt one: Jigglypuff's is the rest
++      jiggly_rest(o, st, pad, fighter);
++      pad.button &= (uint16_t)~jump_bit(JigglyRest);
++      st.ut_frame = -1; st.ut_was_down = true;
++    } else if (enabled(UpTiltButton)) {   // first: a press it takes is no jump for the other mods
 +      const uint16_t bit = jump_bit(UpTiltButton);
 +      const bool down = (pad.button & bit) != 0;
 +      if (uptilt_button(o, st, pad, fighter, delay)) pad.button &= (uint16_t)~bit;
@@ -5136,6 +5204,7 @@ index 0000000..a8c7a7b
 +    } else {
 +      st.ut_frame = -1;
 +    }
++    if (!rest_held) st.jr_t = 0;
 +    // One line per push or press, so a session log shows what the mods saw.
 +    if (up && !st.cstick_was_up && pad.err == 0 && enabled(CStickUpJump))
 +      host::log("padmods: C-up on controller %d, %s fighter%s motion %d %s", p + 1, online ? "online" : "offline",
@@ -5285,10 +5354,10 @@ index 0000000..a8c7a7b
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..149f47d
+index 0000000..de17b45
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,164 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -5388,6 +5457,9 @@ index 0000000..149f47d
 +  // A held through a jab, any fighter but Captain Falcon: A goes up and down every frame for them,
 +  // so the jab combo (and a rapid jab, or Pikachu's repeating jab) keeps going while A stays held.
 +  HoldJab = 22,
++  // Jigglypuff: the X/Y button she does not jump with, held: down-B (Rest) the moment an opponent is
++  // in Rest's range (measured in the game), B pressed every other frame until she can act.
++  JigglyRest = 23,
 +  kCount
 +};
 +
@@ -5451,7 +5523,7 @@ index 0000000..149f47d
 +
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/window.cpp b/port/runtime/host/window.cpp
-index af6c26c..1910a9b 100644
+index 6385666..c5a009b 100644
 --- a/port/runtime/host/window.cpp
 +++ b/port/runtime/host/window.cpp
 @@ -89,6 +89,8 @@ std::atomic<bool> g_legacy_settings_toggle{false};
@@ -5592,10 +5664,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..43a8e5c
+index 0000000..545bf30
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1319 @@
+@@ -0,0 +1,1342 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -6910,6 +6982,29 @@ index 0000000..43a8e5c
 +  for (int f = 0; f < 4; ++f) CHECK(pad4({kA}).button & kA);
 +  for (int f = 0; f < 10; ++f) CHECK(!(pad4({}).button & kA));        // a tap: nothing added
 +  idle(30);
++
++  // ---- Jigglypuff: the free X/Y button held = Rest once an opponent is in range ----
++  {
++    constexpr int kPuff = 0x0F + 1;
++    only(pad_mods::JigglyRest);
++    const uint16_t rb = pad_mods::enabled(pad_mods::JumpWithY) ? kX : kY;
++    fighter(3, kPuff, kWait, 0); view.port_slot[3] = 3; view.pos_x[3] = 0; view.pos_y[3] = 0; idle(30);
++    view.slot_live[1] = 1; view.slot_x[1] = 40; view.slot_y[1] = 0; view.slot_team[1] = -1; view.slot_team[3] = -1;
++    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); CHECK(!(p.button & (kB | kX | kY))); }   // far: nothing, no jump
++    view.slot_x[1] = 3;
++    int bs = 0;
++    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); if (p.button & kB) { ++bs; CHECK(p.stick_y == -80 && p.stick_x == 0); } }
++    CHECK(bs == 2);
++    { host::PadState p = pad4({}); CHECK(!(p.button & kB)); }   // let go: nothing
++    // same team (Teams): not an opponent
++    view.slot_team[1] = 0; view.slot_team[3] = 0;
++    for (int f = 0; f < 4; ++f) CHECK(!(pad4({rb}).button & kB));
++    view.slot_team[1] = view.slot_team[3] = -1;
++    // not Jigglypuff: the button is untouched
++    fighter(3, kFox, kWait, 0); idle(30);
++    CHECK(pad4({rb}).button & rb);
++    idle(30); view.slot_live[1] = 0; view.port_slot[3] = 0;
++  }
 +
 +  CHECK(range_violations == 0);
 +  std::puts("pad_mods: ok");
