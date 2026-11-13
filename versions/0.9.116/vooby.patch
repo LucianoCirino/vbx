@@ -2783,10 +2783,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..f508080
+index 0000000..475a3e7
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2603 @@
+@@ -0,0 +1,2626 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3011,11 +3011,12 @@ index 0000000..f508080
 +     "Let go of B to stop. If one does not get back to the ledge, the up-B goes on as yours and no\n"
 +     "more are started until B is let go.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
-+    {"padmod_falcon_gentleman", "Always gentleman", "Captain Falcon's jab always finishes jab, jab, jab, never the rapid jab.",
-+     "On: as Captain Falcon, mashing or tapping A on the ground gives the three-hit jab (the\n"
-+     "gentleman) and never turns into the rapid jab. Only one A per jab reaches the game (more\n"
-+     "presses wait until you let go), and A stays held through the third hit, so slow ones work too.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Hidden},   // not working yet (lab 11-10)
++    {"padmod_falcon_gentleman", "Always gentleman", "Captain Falcon: mash or tap A for jab, jab, jab, never the rapid jab.",
++     "On: as Captain Falcon, mashing or tapping A gives the three-hit jab (the gentleman), never the\n"
++     "rapid jab. The game counts every A press and release in a jab; the mod holds A for you and puts\n"
++     "the next press inside the hit's freeze (hitlag), where the game does not count it. Slow presses\n"
++     "work on hit. On a whiff the third jab only comes from mashing (two slow whiffed jabs stop there).\n"
++     "Offline (no input delay). Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},   // not working yet (lab 11-10)
 +    {"padmod_samus_swd", "Hold down-B: super wavedash", "Samus: down-B with B held slides far in the direction you hold.",
 +     "On: as Samus on the ground, press down-B and keep B held, then hold left or right: as the\n"
 +     "bomb's hop lands the mod taps the stick away and back on the exact frames and lets it rest,\n"
@@ -3155,8 +3156,9 @@ index 0000000..f508080
 +  int oos_shine_recent = 0;
 +  int us_frame = -1;   // ledge up-B stall: frames into the current one (-1 none)
 +  bool us_stopped = false;   // one did not get back to the ledge: no more until B is let go
-+  int gj_motion = -1, gj_presses = 0;   // Falcon's gentleman: the jab seen, A presses let in during it
-+  bool gj_hold = false, gj_hide = false;   // A kept down to the third hit; an extra press kept back until let go
++  int gj_motion = -1, gj_count = 0, gj_phase = 0;   // Falcon's gentleman: the jab seen, counted A edges, step
++  bool gj_want = false, gj_lag_seen = false;       // a next jab asked for; this jab's hitlag seen
++  float gj_last_frame = -1.0f;                     // its animation frame last time (a repeat = hitlag)
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
@@ -3621,31 +3623,52 @@ index 0000000..f508080
 +}
 +
 +// ---- Captain Falcon: always the gentleman (FalconGentleman)
-+// ftCo_Attack100.c ftCo_Attack_800D6A50: every A press AND release since jab 1 began counts, and once
-+// the count reaches rapid_jab_window while the jab's rapid flag is on, the jab turns into the rapid
-+// jab, also out of jab 3 (Attack13_IASA checks it too). Lab 11-10, Falcon in Training: A every 3
-+// frames went 44 45 46 47, and 3 presses 9 or 15 frames apart did too (the third press's release in
-+// jab 3). So: one A per jab (another waits until it is let go), and A stays down from the press that
-+// makes jab 3 until jab 3 is over.
++// ftCo_Attack100.c ftCo_Attack_800D6A50 (run in the Attack11/12/13 IASA): every A press AND release
++// since jab 1 began counts (x1A54), and once the count reaches rapid_jab_window, any frame with the
++// animation's rapid flag on turns the jab into the rapid jab. Lab 11-13 (Falcon, whiff): the fewest
++// edges three jabs can take (release, press, release, press) still went rapid on jab 3's frame 12,
++// whatever the timing. IASA does not run in hitlag, so an edge there is never counted (and a press
++// there is never seen). So, while they hold or tap A: A is held down for them through the jab; when
++// a jab connects (the view shows its animation frame repeat: hitlag, 3 frames for jab 1 and 2) A
++// lets go on the next frame, still frozen, and goes down on the one after, the first that counts:
++// one counted edge per jab. A jab that missed (or a press after its hitlag) needs a counted release
++// and press: allowed only while
++// the count stays under 4, so after two whiffed jabs no third (no rapid jab). Jab 3: A stays down.
++// Offline (no input delay) only: with delay the frozen frames are not the ones the pad lands on.
 +constexpr int32_t kKindFalcon = 0x02 + 1;
 +constexpr int32_t kAttack11 = 44, kAttack12 = 45, kAttack13 = 46;
-+bool falcon_gentleman(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind) {
++bool falcon_gentleman(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
++                      int delay) {
 +  const bool a = (pad.button & kPadA) != 0, fresh = a && !(st.buttons_was_down & kPadA);
-+  if (!a) st.gj_hide = false;
 +  const int m = (fighter && kind == kKindFalcon && fighter->ground_or_air == 0) ? fighter->motion_id : -1;
 +  if (m != kAttack11 && m != kAttack12 && m != kAttack13) {
-+    st.gj_motion = -1; st.gj_presses = 0; st.gj_hold = false;
-+    if (st.gj_hide) { o.remove |= kPadA; return true; }   // a press kept back stays back until let go
++    st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false;
 +    return false;
 +  }
-+  if (m != st.gj_motion) { st.gj_motion = m; st.gj_presses = 0; }
-+  if (m == kAttack13) { if (st.gj_hold) o.add |= kPadA; else o.remove |= kPadA; return true; }   // no change in jab 3
-+  if (st.gj_hold) { o.add |= kPadA; return true; }
-+  if (fresh) {
-+    if (st.gj_presses == 0) { st.gj_presses = 1; if (m == kAttack12) st.gj_hold = true; }
-+    else st.gj_hide = true;
++  const bool frozen = m == st.gj_motion && fighter->anim_frame == st.gj_last_frame;
++  const bool first_frozen = frozen && !st.gj_lag_seen;
++  if (m != st.gj_motion) { st.gj_motion = m; st.gj_want = false; st.gj_phase = 0; st.gj_lag_seen = false; }
++  st.gj_last_frame = fighter->anim_frame;
++  if (frozen) st.gj_lag_seen = true;
++  if (m == kAttack13) { o.add |= kPadA; return true; }   // no edge in jab 3
++  if (fresh) st.gj_want = true;
++  switch (st.gj_phase) {
++    case 1: o.remove |= kPadA; st.gj_phase = 2; return true;                    // a counted release (whiff path)
++    case 2: o.add |= kPadA; st.gj_phase = 3; ++st.gj_count; return true;        // the press that queues the next jab
++    case 3: o.add |= kPadA; return true;                                        // queued: held
++    case 5: if (st.gj_want) { o.add |= kPadA; st.gj_phase = 3; ++st.gj_count; } else o.remove |= kPadA; return true;   // up since the hitlag: their press is one counted edge
++    default: break;
 +  }
-+  if (st.gj_hide) o.remove |= kPadA;
++  if (delay == 0 && first_frozen) {   // hit: let go in the last frozen frame (not counted)
++    o.remove |= kPadA; st.gj_phase = st.gj_want ? 2 : 5;   // asked already: press next frame; else up until asked
++    host::log("padmods: gentleman: jab %d connected, next press in its hitlag", m - kAttack11 + 1);
++    return true;
++  }
++  if (st.gj_want && !frozen && (st.gj_lag_seen || fighter->anim_frame >= 6.0f)) {   // asked after the hitlag, or missed: a counted release + press, if under 4
++    if (st.gj_count + 2 < 4) { ++st.gj_count; o.remove |= kPadA; st.gj_phase = 2; return true; }
++    st.gj_want = false;   // a third whiffed jab would be the rapid jab: not done
++  }
++  o.add |= kPadA;
 +  return true;
 +}
 +
@@ -5299,8 +5322,8 @@ index 0000000..f508080
 +    const bool rj = enabled(RunJab) && run_jab(o, st, pad, fighter, delay);
 +    if (!enabled(RunJab)) st.rj_frame = -1;
 +    if (enabled(HoldJab) && !rj) hold_jab(o, st, pad, fighter, kind); else { st.hj_held = 0; st.hj_t = 0; }
-+    if (enabled(FalconGentleman)) falcon_gentleman(o, st, pad, fighter, kind);
-+    else { st.gj_motion = -1; st.gj_hold = st.gj_hide = false; }
++    if (enabled(FalconGentleman)) falcon_gentleman(o, st, pad, fighter, kind, delay);
++    else { st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false; }
 +    if (enabled(SamusSuperWavedash)) samus_swd(o, st, pad, fighter, kind, delay);
 +    else { st.swd_dir = 0; st.swd_go = st.swd_hide_b = false; }
 +    const bool stall = enabled(LedgeStall) && ledge_stall(o, st, pad, fighter, kind, delay);
