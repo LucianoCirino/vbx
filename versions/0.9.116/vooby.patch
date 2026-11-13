@@ -2783,10 +2783,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..120c155
+index 0000000..d45d572
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2659 @@
+@@ -0,0 +1,2670 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3006,11 +3006,12 @@ index 0000000..120c155
 +     "comes before the shine can be jumped out of waits for that moment.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
 +    {"padmod_ledge_stall", "Up-B ledge stall", "Hold B (stick at rest) while hanging on the ledge: drop and up-B back to it, again and again.",
-+     "On: as Fox or Falco hanging on the ledge, hold B with the stick at rest: the mod drops and up-Bs at once,\n"
++     "On: as Fox, Falco, Ganondorf, Sheik, Mewtwo or Zelda hanging on the ledge, hold B with the stick at\n"
++     "rest: the mod drops and up-Bs (Ganondorf falls 19 frames first; Sheik aims the Vanish with your stick),\n"
 +     "and the up-B's startup grabs the ledge again; while you keep holding B it does it again.\n"
 +     "Let go of B to stop. If one does not get back to the ledge, the up-B goes on as yours and no\n"
 +     "more are started until B is let go.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
 +    {"padmod_falcon_gentleman", "Always gentleman", "Captain Falcon: mash or tap A for jab, jab, jab, never the rapid jab.",
 +     "On: as Captain Falcon, mashing or tapping A gives the three-hit jab (the gentleman), never the\n"
 +     "rapid jab. The game counts every A press and release in a jab; the mod holds A for you and puts\n"
@@ -3594,6 +3595,11 @@ index 0000000..120c155
 +// row while B was held. Falco's startup does not catch it: he flies up, falls back and grabs it
 +// about 95 frames later (354x42 356x22 358x20 35x9 252), slower but the same loop. The
 +// drop needs a frame with the stick at rest in CliffWait first (see ledge_dash).
++// Lab 11-13 (Battlefield's left ledge, B held): Mewtwo 6 stalls in a row, Zelda 4, Sheik 4 (from
++// Zelda's transform), all with the Fox timing; Ganondorf's Dark Dive straight after the drop rises
++// over the stage and lands on it: it has to fall first, a wait of 18..21 frames regrabbed 6 in a row
++// (24 fell short). 19.
++constexpr int kStallWaitGanon = 19;
 +bool ledge_stall(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
 +                 int delay) {
 +  const bool b = (pad.button & kPadB) != 0;
@@ -3601,19 +3607,22 @@ index 0000000..120c155
 +  const bool hanging = fighter && (fighter->motion_id == 0xFC /* CliffCatch */ || fighter->motion_id == 0xFD /* CliffWait */);
 +  if (st.us_frame >= 0) {
 +    const int f = st.us_frame++;
++    static const int test_w = std::getenv("MU_TEST_STALL_W") ? std::atoi(std::getenv("MU_TEST_STALL_W")) : -1;   // tests
++    const int w = test_w >= 0 ? test_w : (kind == 0x19 + 1 ? kStallWaitGanon : 0);   // frames falling before the up-B
 +    o.remove |= kPadB;
 +    o.set_stick = true; o.sx = 0; o.sy = 0;
 +    if (f == 1) o.sy = -80;                                 // the drop
-+    else if (f >= 2 && f <= 4) { o.add |= kPadB; o.sy = 80; }   // the up-B, straight up
-+    else if (f == 5) o.sy = 80;
-+    else if (f > delay + 6 && fighter && fighter->motion_id == 0xFD /* CliffWait */) st.us_frame = -1;   // back: the next one
++    else if (f >= 2 + w && f <= 4 + w) { o.add |= kPadB; o.sy = 80; }   // the up-B, straight up
++    else if (f == 5 + w) o.sy = 80;
++    else if (f > delay + 6 + w && fighter && fighter->motion_id == 0xFD /* CliffWait */) st.us_frame = -1;   // back: the next one
++    if (f > 5 + w && kind == 0x07 + 1) o.set_stick = false;   // Sheik: their stick aims the Vanish (TSC 11-12)
 +    else if (f > 150 + delay) {   // never got back (Falco's flies up and falls back: ~95 frames)
 +      host::log("padmods: ledge stall did not get back to the ledge (motion %d)", fighter ? (int)fighter->motion_id : -1);
 +      st.us_frame = -1;
 +      st.us_stopped = true;
 +      return false;
 +    }
-+    if (f > 5 && f > delay + 6 && fighter && !hanging && fighter->motion_id != 0x162 && fighter->motion_id != kKneeBend &&
++    if (f > 5 + w && f > delay + 6 + w && fighter && !hanging && fighter->motion_id != 0x162 && fighter->motion_id != kKneeBend &&
 +        fighter->ground_or_air == 0) {   // landed on the stage instead: stop
 +      st.us_frame = -1;
 +      st.us_stopped = true;
@@ -3621,7 +3630,9 @@ index 0000000..120c155
 +    }
 +    return true;
 +  }
-+  if (st.us_stopped || !fighter || !fox_or_falco(kind) || fighter->motion_id != 0xFD /* CliffWait */) return false;
++  // Fox, Falco, and (TSC 11-12) Ganondorf, Sheik, Mewtwo, Zelda: the same drop + up-B, more in the lab notes.
++  const bool stall_kind = fox_or_falco(kind) || kind == 0x19 + 1 || kind == 0x07 + 1 || kind == 0x10 + 1 || kind == 0x13 + 1;
++  if (st.us_stopped || !fighter || !stall_kind || fighter->motion_id != 0xFD /* CliffWait */) return false;
 +  // Only with the stick at rest: a stick pushed anywhere is their own ledge option (down/away = drop,
 +  // then B is their shine or laser). Friend 11-12: drop + shine came out as up-B.
 +  if (std::abs((int)pad.stick_x) >= kStickDeadzone || std::abs((int)pad.stick_y) >= kStickDeadzone) return false;
