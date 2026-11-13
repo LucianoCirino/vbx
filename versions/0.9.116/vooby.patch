@@ -1407,10 +1407,10 @@ index 0000000..2fcb4c4
 +};
 diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
 new file mode 100644
-index 0000000..a1a4be4
+index 0000000..01cb12a
 --- /dev/null
 +++ b/port/runtime/gx/vooby_ui.inl
-@@ -0,0 +1,625 @@
+@@ -0,0 +1,633 @@
 +// Vooby Mods window (F1 > Game > Vooby Mods > Open): a popup of its own over the settings, with a
 +// header, one tab per group and a card per mod. Every control is a real ImGui item (an invisible
 +// button drawn over), so mouse, keyboard and controller navigation all work as in the rest of F1.
@@ -1997,7 +1997,8 @@ index 0000000..a1a4be4
 +      pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
 +      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
 +      pad_mods::FoxFalcoShine, pad_mods::Multishine, pad_mods::ShineWavedash, pad_mods::LedgeStall, pad_mods::ShieldShine, pad_mods::FoxLaserLoop,
-+      pad_mods::UpTiltButton, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash, pad_mods::JumpWithY, pad_mods::HumanTiming};
++      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash,
++      pad_mods::ZeldaShieldNayru, pad_mods::JigglyRest, pad_mods::JumpWithY, pad_mods::HumanTiming};
 +  if (tab == kBlockTab) {   // matchmaking reads the list whatever the mods' switches say
 +    ImGui::EndDisabled();
 +    changed |= block_tab();
@@ -2005,8 +2006,15 @@ index 0000000..a1a4be4
 +  }
 +  else if (tab == pad_mods::AiGroup) changed |= ai_tab();
 +  else
++  {
 +    for (int m : kOrder)
 +      if (pad_mods::info(m).group == tab) changed |= card(m);
++    for (int m = 0; m < pad_mods::kCount; ++m) {   // any mod the order above does not name yet still shows
++      bool listed = false;
++      for (int k : kOrder) listed |= k == m;
++      if (!listed && pad_mods::info(m).group == tab) changed |= card(m);
++    }
++  }
 +  ImGui::EndDisabled();
 +  ImGui::EndChild();
 +  ImGui::PopStyleVar();
@@ -2775,10 +2783,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..f9cb97a
+index 0000000..f508080
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2586 @@
+@@ -0,0 +1,2603 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3012,7 +3020,7 @@ index 0000000..f9cb97a
 +     "On: as Samus on the ground, press down-B and keep B held, then hold left or right: as the\n"
 +     "bomb's hop lands the mod taps the stick away and back on the exact frames and lets it rest,\n"
 +     "a super wavedash in that direction. Let go of B (or hold no direction) for a plain bomb.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Hidden},   // slide cut short in the lab (11-10)
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},   // lab 11-13: slides at 5.8 off FD's edge
 +    {"padmod_uptilt_button", "Up-tilt button", "The jump button you do not use (Options) is an up-tilt on the ground, also out of a dash or a run.",
 +     "On: on the ground, the X/Y button you do not jump with (Options: I jump with Y) gives an up-tilt: A with the stick tilted up\n"
 +     "(not far enough for an up-smash or a jump). Out of a dash or a run the mod crouches first,\n"
@@ -3031,7 +3039,8 @@ index 0000000..f9cb97a
 +    {"padmod_hold_jab", "Hold A: keep jabbing", "Keep A held and the jab goes on by itself (jab combo, rapid jab, Pikachu's endless jab).",
 +     "On: hold A through a jab and the mod lets go and presses A again every frame for you, so the\n"
 +     "jab combo and the rapid jab keep going until you let go of A. A quick tap is one jab as\n"
-+     "before. Any fighter but Captain Falcon (his would always turn into the rapid jab).\n"
++     "before. Any fighter but Captain Falcon (his would always turn into the rapid jab). Samus: jab 1\n"
++     "only, again and again, each one cancelled into a crouch as soon as it can be.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
 +    {"padmod_jiggly_rest", "Auto rest", "Jigglypuff: hold the button you do not jump with and she rests the moment an opponent is in range.",
 +     "On: as Jigglypuff, hold the X/Y button you do not jump with (Options: I jump with Y). While it\n"
@@ -3738,16 +3747,28 @@ index 0000000..f9cb97a
 +// for them while they hold it, also through the Wait between two jabs. A tap shorter than that is
 +// one jab as before. Not Captain Falcon: any 3 presses turn his into the rapid jab.
 +constexpr int kHoldJabAfter = 8;
++// Samus (TSC 11-13: "only the first jab... jab crouch crouch jab"): from jab 1 the stick goes down
++// (soft, no platform drop) with A up, so the jab is cancelled into a crouch the first frame it can
++// be, and from the crouch A goes in with the stick at rest: jab 1 again. After 3 frames held.
++constexpr int kHoldJabAfterSamus = 3;
 +bool hold_jab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind) {
-+  constexpr int32_t kFalcon = 0x02 + 1;
++  constexpr int32_t kFalcon = 0x02 + 1, kSamus = 0x0D + 1;
 +  const int m = fighter ? fighter->motion_id : -1;
 +  const bool jab = m >= 44 && m <= 49;   // Attack11, 12, 13, Attack100Start, Loop, End
-+  if (!(pad.button & kPadA) || !fighter || fighter->ground_or_air != 0 || kind == kFalcon || (!jab && m != kWait) ||
-+      (!jab && st.hj_held < kHoldJabAfter)) {
++  const bool samus = kind == kSamus, squat = m == kSquat || m == 40 || m == 41;
++  const int after = samus ? kHoldJabAfterSamus : kHoldJabAfter;
++  if (!(pad.button & kPadA) || !fighter || fighter->ground_or_air != 0 || kind == kFalcon ||
++      (!jab && m != kWait && !(samus && squat)) || (!jab && st.hj_held < after)) {
 +    st.hj_held = 0; st.hj_t = 0;
 +    return false;
 +  }
-+  if (st.hj_held < kHoldJabAfter) { ++st.hj_held; return false; }
++  if (st.hj_held < after) { ++st.hj_held; return false; }
++  if (samus) {
++    if (m == 44) { o.remove |= kPadA; o.set_stick = true; o.sx = 0; o.sy = -56; st.hj_t = 0; return true; }
++    o.set_stick = true; o.sx = 0; o.sy = 0;   // crouching (or standing): A with the stick at rest = jab 1
++    if (st.hj_t++ & 1) o.remove |= kPadA; else o.add |= kPadA;
++    return true;
++  }
 +  if (++st.hj_t & 1) o.remove |= kPadA; else o.add |= kPadA;
 +  return true;
 +}
@@ -4451,8 +4472,12 @@ index 0000000..f9cb97a
 +// ledgedash), Mewtwo -, Luigi 7, Marth -, Zelda -, Young Link -, Doc 6, Falco 5, Pichu 4,
 +// Game & Watch 11, Ganondorf -, Roy 15. "-": not measured yet (the lab's way onto the ledge slid
 +// them past it), so R stays theirs.
++// 11-13 Samus 17, Battlefield's left ledge (TSC: "make sure for samus ledgedash works on
++// battlefield"): she hangs 22.9 below the stage, so the drift style's jump in hits the stage's
++// underside (StopCeil); this style (C-stick drop, double jump, no drift) lands from 16 (0.9 in from
++// the edge), 17 lands 18 frames after the drop at -65.1 and slides to -38.6.
 +constexpr int8_t kLedgeDashDodge[0x1B] = {
-+    6, 4, 0, 13, 8, 12, 0, 8, 15, 0, 6, 6, 5, 0, 0, 0, 0, 7, 0, 0, 0, 6, 5, 4, 11, 0, 15};
++    6, 4, 0, 13, 8, 12, 0, 8, 15, 0, 6, 6, 5, 17, 0, 0, 0, 7, 0, 0, 0, 6, 5, 4, 11, 0, 15};
 +int ledge_dash_dodge(int32_t kind) { return (kind >= 1 && kind <= 0x1B) ? kLedgeDashDodge[kind - 1] : 0; }
 +// Fighters whose drop + double jump never reaches the stage (Ganondorf: every air dodge frame 3..25
 +// fell short in the lab) use a ledge jump instead: X from the hang (CliffJump), then the air dodge
