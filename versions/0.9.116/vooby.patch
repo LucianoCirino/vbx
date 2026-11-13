@@ -2775,10 +2775,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..429c167
+index 0000000..f9cb97a
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2573 @@
+@@ -0,0 +1,2586 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3149,7 +3149,7 @@ index 0000000..429c167
 +  int gj_motion = -1, gj_presses = 0;   // Falcon's gentleman: the jab seen, A presses let in during it
 +  bool gj_hold = false, gj_hide = false;   // A kept down to the third hit; an extra press kept back until let go
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
-+  int jr_t = 0;                         // auto rest: B pulse clock
++  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
 +  int hj_held = 0, hj_t = 0;            // hold A to jab: frames A held in a jab, pulse clock
@@ -3678,15 +3678,28 @@ index 0000000..429c167
 +constexpr int32_t kKindPuff = 0x0F + 1;
 +// Lab 11-12 (Training on Final Destination, a standing Marth CPU, read on Rest's first frame): hits
 +// at 0.3..5.1 sideways on the ground and from a hop (with the opponent's feet up to 5.2 below hers),
-+// misses from 5.6 on. 4.5 leaves the hitboxes a margin of overlap.
-+float g_rest_rx = 4.5f, g_rest_down = -6.0f, g_rest_up = 4.0f;
++// misses from 5.6 on, but against an opponent being pushed it missed even at 3.5-3.9 (from a walk).
++// At 2.6 all 11 approaches hit (walks at 4 speeds, crouch, standing near, dash, run, 3 hops); the
++// push keeps closing the gap ~0.1 a frame, so the wait for the overlap is a few frames.
++float g_rest_rx = 2.6f, g_rest_down = -6.0f, g_rest_up = 4.0f;
 +bool jiggly_rest(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter) {
 +  static const bool test_log = std::getenv("MU_TEST_REST_LOG") != nullptr;
 +  if (static const char* rx = std::getenv("MU_TEST_REST_RX"); rx) g_rest_rx = (float)std::atof(rx);   // tests
 +  o.remove |= jump_bit(JigglyRest);
-+  if (!fighter || !st.opp_ok) { st.jr_t = 0; return true; }
++  if (!fighter || !st.opp_ok) { st.jr_t = 0; st.jr_close = 0; return true; }
 +  if (test_log) host::log("rest: dx %.2f dy %.2f motion %d", st.opp_dx, st.opp_dy, (int)fighter->motion_id);
-+  if (std::fabs(st.opp_dx) > g_rest_rx || st.opp_dy < g_rest_down || st.opp_dy > g_rest_up) { st.jr_t = 0; return true; }
++  if (std::fabs(st.opp_dx) > g_rest_rx || st.opp_dy < g_rest_down || st.opp_dy > g_rest_up) {
++    st.jr_t = 0;
++    // Close in: walking into a standing opponent stops about 6 away (the push), outside Rest's
++    // reach, so on the ground near them the stick lets go one frame and then goes all the way
++    // toward them: a dash, whose speed closes the gap (lab: dashes reached 4.0-4.2 and hit).
++    const bool near = fighter->ground_or_air == 0 && std::fabs(st.opp_dx) < 9.0f && std::fabs(st.opp_dy) < 4.0f;
++    if (!near) { st.jr_close = 0; return true; }
++    o.set_stick = true; o.sy = 0;
++    o.sx = st.jr_close++ == 0 ? 0 : (int8_t)(st.opp_dx > 0 ? 80 : -80);
++    return true;
++  }
++  st.jr_close = 0;
 +  if (st.jr_t == 0) host::log("padmods: auto rest, opponent at (%.1f, %.1f)", st.opp_dx, st.opp_dy);
 +  o.set_stick = true; o.sx = 0; o.sy = -80;
 +  if ((st.jr_t++ & 1) == 0) o.add |= kPadB; else o.remove |= kPadB;
@@ -5204,7 +5217,7 @@ index 0000000..429c167
 +    } else {
 +      st.ut_frame = -1;
 +    }
-+    if (!rest_held) st.jr_t = 0;
++    if (!rest_held) { st.jr_t = 0; st.jr_close = 0; }
 +    // One line per push or press, so a session log shows what the mods saw.
 +    if (up && !st.cstick_was_up && pad.err == 0 && enabled(CStickUpJump))
 +      host::log("padmods: C-up on controller %d, %s fighter%s motion %d %s", p + 1, online ? "online" : "offline",
@@ -5664,10 +5677,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..545bf30
+index 0000000..7c6e361
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1342 @@
+@@ -0,0 +1,1345 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -6990,8 +7003,11 @@ index 0000000..545bf30
 +    const uint16_t rb = pad_mods::enabled(pad_mods::JumpWithY) ? kX : kY;
 +    fighter(3, kPuff, kWait, 0); view.port_slot[3] = 3; view.pos_x[3] = 0; view.pos_y[3] = 0; idle(30);
 +    view.slot_live[1] = 1; view.slot_x[1] = 40; view.slot_y[1] = 0; view.slot_team[1] = -1; view.slot_team[3] = -1;
-+    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); CHECK(!(p.button & (kB | kX | kY))); }   // far: nothing, no jump
-+    view.slot_x[1] = 3;
++    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); CHECK(!(p.button & (kB | kX | kY)) && p.stick_x == 0); }   // far: nothing, no jump
++    view.slot_x[1] = 6;   // pushed against them, out of reach: close in (a frame at rest, then all the way)
++    { host::PadState p = pad4({rb}); CHECK(!(p.button & kB) && p.stick_x == 0); }
++    { host::PadState p = pad4({rb}); CHECK(!(p.button & kB) && p.stick_x == 80); }
++    view.slot_x[1] = 2;
 +    int bs = 0;
 +    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); if (p.button & kB) { ++bs; CHECK(p.stick_y == -80 && p.stick_x == 0); } }
 +    CHECK(bs == 2);
