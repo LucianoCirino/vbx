@@ -2820,10 +2820,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..2758f9e
+index 0000000..147a25f
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,3112 @@
+@@ -0,0 +1,3153 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3254,8 +3254,9 @@ index 0000000..2758f9e
 +  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
-+  int sg_step = -1; bool sg_armed = false, sg_tap = false;
++  int sg_step = -1; bool sg_active = false;   // Samus's extended grapple: in a grab; set up this stock
 +  int sm_phase = 0, sm_t = 0; float sm_prev_y = 0; bool sm_was_missile = false;   // Samus missile loop
++  bool sm_plat = false; float sm_plat_y = 0, sm_plat_x0 = 0, sm_plat_x1 = 0;   // the platform she last stood on
 +  int du_t = -1, du_face = 1;           // Dr. Mario's up-B cancel: frames since the up-B, facing at its start
 +  bool mw_on = false; int mw_t = 0; float mw_prev_y = 0;   // Mario's wall jump up-B loop
 +  int pf_t = -1, pf_face = 1;           // pivot forward smash: step, facing in the dash
@@ -3962,30 +3963,44 @@ index 0000000..2758f9e
 +  return true;
 +}
 +
-+// ---- Samus: Z held into a grab = the Extended Grapple (SamusExtendedGrapple)
-+// SmashWiki (Extended Grapple, NTSC): during the grab's frames 8..39, before the beam shows, D-pad
-+// up, down, up, then Z or A: the beam goes about 3x as far until she loses a stock (it then grabs
-+// only at its tip, on a Z/A press). With Z still held as the grab (Catch 212, CatchDash 214) starts,
-+// from frame 8: up, -, down, -, up, Z let go, Z: one press each, the Z a fresh one.
++// ---- Samus: the Extended Grapple, set up and used for you (SamusExtendedGrapple)
++// itsamusgrapple.c samus_grapple_state_sync, run every frame the grapple item lives: fp x2240 steps
++// on D-pad Up held, Down held, Up held, then a fresh A (not Z). At the next grapple's spawn
++// (it_802B7C18) x2240 >= 4 makes it extended (x16 1 on the ground, 2 in the air) and keeps it so
++// until the stock is lost (x2240 cleared only on a normal grapple, i.e. never again). An extended
++// ground grapple has no grab box of its own: a fresh A while x16 == 1 makes one at the tip, once
++// (x16++). L held while x16 == 1 steers the tip at the nearest opponent (ftCo_800A4A40).
++// So: the first grab of a stock gets the sequence (from frame kSgSeqAt, once the item is there);
++// every grab after it holds L (tracking) and presses A when the tip should be on them
++// (kSgGrabAt + distance / kSgTipSpeed frames, lab-measured).
 +constexpr int32_t kSamusKind = 0x0D + 1;
 +constexpr uint16_t kPadDUp = 0x0008, kPadDDownG = 0x0004;
++constexpr int kSgGrabAt = 12;          // placeholder until measured
++constexpr float kSgTipSpeed = 3.0f;
 +bool samus_grapple(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind) {
++  static const int seq_at = std::getenv("MU_TEST_SG_SEQ") ? std::atoi(std::getenv("MU_TEST_SG_SEQ")) : 9;    // tests
++  static const int grab_at = std::getenv("MU_TEST_SG_A") ? std::atoi(std::getenv("MU_TEST_SG_A")) : -1;
 +  const int m = (f && kind == kSamusKind) ? f->motion_id : -1;
-+  if (m != 212 && m != 214) { st.sg_step = -1; st.sg_armed = false; st.sg_tap = false; return false; }
-+  if (st.sg_step < 0 && !st.sg_armed) {
-+    if (!(pad.button & kPadZ)) { st.sg_armed = true; st.sg_tap = true; return false; }   // let go: a tap, the normal grab
-+    if (f->anim_frame < 7.0f) return false;                                            // still held: wait
-+    st.sg_armed = true; st.sg_tap = false;
++  if (m >= 0 && m < kWait) st.sg_active = false;   // dead / respawning: the extension is gone
++  if (m != 212 && m != 214) { st.sg_step = -1; return false; }
++  const int fr = (int)(f->anim_frame + 0.5f) + 1;
++  if (st.sg_step < 0) st.sg_step = 0;
++  if (!st.sg_active) {   // the sequence: up, down, up, A up, A
++    const int s = fr - seq_at;
++    if (s < 0 || s > 4) return false;
++    o.remove |= kPadA | kPadDUp | kPadDDownG;
++    if (s == 0 || s == 2) o.add |= kPadDUp;
++    else if (s == 1) o.add |= kPadDDownG;
++    else if (s == 4) { o.add |= kPadA; st.sg_active = true; host::log("padmods: Samus extended grapple set up"); }
++    return true;
 +  }
-+  if (st.sg_tap) return false;
-+  if (st.sg_step < 0) { st.sg_step = 0; host::log("padmods: Samus extended grapple"); }
-+  if (st.sg_step < 0) return false;
-+  const int s = st.sg_step++;
-+  if (s == 0 || s == 4) o.add |= kPadDUp;
-+  else if (s == 2) o.add |= kPadDDownG;
-+  if (s == 5) o.remove |= kPadZ;
-+  else if (s == 6) o.add |= kPadZ;
-+  return s <= 6;
++  // extended: L held (the tip tracks them), A once when it reaches them
++  o.add |= kPadL;
++  const float d = std::sqrt(st.opp_dx * st.opp_dx + st.opp_dy * st.opp_dy);
++  const int at = grab_at >= 0 ? grab_at : kSgGrabAt + (int)(d / kSgTipSpeed + 0.5f);
++  o.remove |= kPadA;
++  if (fr == at) { o.add |= kPadA; host::log("padmods: Samus extended grapple: A at frame %d (opponent %.0f away)", fr, d); }
++  return true;
 +}
 +
 +// ---- Samus: down-B held = super wavedash (SamusSuperWavedash)
@@ -4038,6 +4053,11 @@ index 0000000..2758f9e
 +  if (f < 41) {   // the hop: their stick, so the ball drifts where they hold (TSC 11-13: "the mod makes
 +                  // it so i cant move forward while i drop in ball form"); the inputs are only at the landing
 +    st.swd_go = b && st.swd_dir != 0;
++    // ... except the last frames before the landing (frame 37): drifting into it kills the slide
++    // (lab 11-13, FD: stick theirs to the landing slid 6; at rest from frame 37 on, 73, the same as
++    // at rest the whole hop; from 33 or 25 also 73). From 35 for a margin.
++    static const int rest_from = std::getenv("MU_TEST_SWD_REST") ? std::atoi(std::getenv("MU_TEST_SWD_REST")) : 35;   // tests
++    if (st.swd_go && f >= rest_from) { o.set_stick = true; o.sx = 0; o.sy = 0; }
 +    return b;
 +  }
 +  if (!st.swd_go) return b;
@@ -4075,6 +4095,10 @@ index 0000000..2758f9e
 +  const float vy = st.py - st.sm_prev_y;
 +  st.sm_prev_y = st.py;
 +  const bool landed_one = st.sm_was_missile && !missile && f && f->ground_or_air == 0;
++  if (f && kind == kKindSamus && f->ground_or_air == 0 && st.py > 2.0f) {   // standing on a platform: learn it
++    if (!st.sm_plat || std::fabs(st.py - st.sm_plat_y) > 1.0f) { st.sm_plat = true; st.sm_plat_y = st.py; st.sm_plat_x0 = st.sm_plat_x1 = st.px; }
++    st.sm_plat_x0 = std::min(st.sm_plat_x0, st.px); st.sm_plat_x1 = std::max(st.sm_plat_x1, st.px);
++  }
 +  st.sm_was_missile = missile;
 +  if (!b || m < 0) { st.sm_phase = 0; return false; }
 +  if (st.sm_phase == 0) {
@@ -4113,8 +4137,19 @@ index 0000000..2758f9e
 +  }
 +  o.set_stick = true; o.sx = pad.stick_x; o.sy = 0;
 +  if (m == kKneeBend) return true;
++  // Fire as soon as she is off the ground (TSC 11-13: Stadium's fast double missiles). Lab 11-13
++  // (Stadium, under a side platform): a short hop alone peaks at 22.75, short of the platform (25),
++  // but with a missile out she lands on it, 31 frames after a missile fired on the first air frames:
++  // up onto the platform, drop through, down, again. Away from a platform she lands back on the
++  // ground ~50 frames later, cancelled the same. Late only when the landing is too near for the
++  // missile to come out (frame 15) otherwise.
 +  const int left = frames_to_ground(st.py, vy);
-+  if (st.sm_phase == 2 && left <= kMissileOut + 3 + delay) {
++  // Under the platform she last stood on, low enough to land on it: fire at once (up onto it).
++  // Elsewhere late, near the ground: a missile out at the top of a short hop flies over a standing
++  // opponent (lab 11-13, FD: 1 hit early, 4 late).
++  const bool under = st.sm_plat && st.px >= st.sm_plat_x0 - 8.0f && st.px <= st.sm_plat_x1 + 8.0f &&
++                     st.sm_plat_y - st.py > 3.0f && st.sm_plat_y - st.py < 30.0f;
++  if (st.sm_phase == 2 && (under || left <= kMissileOut + 3 + delay)) {
 +    o.sx = 0;              // at rest one frame: the full push next is a smash (the strong missile)
 +    st.sm_phase = 4;
 +  }
@@ -4168,9 +4203,15 @@ index 0000000..2758f9e
 +  // ledge facing away, "in front" pushed the wrong way)
 +  if (st.py < -2.0f) wall = st.px > 0 ? -1 : 1;
 +  o.set_stick = true; o.sy = 0;
-+  if (upb) {   // into the wall; once it falls, away full every other frame (each a fresh push)
++  if (upb) {
++    // SmashWiki (Mario's up special): the up-B wall jump window is the move's frames 21..29
++    // (horizontal angle 21, diagonal 22, none 23, full height 25) with Mario against the wall from
++    // the start; a flick away inside it is taken (and buffered). So: into the wall until frame 20,
++    // then away full every other frame (each a fresh push) through frame 29.
++    const int fr = (int)(f->anim_frame + 0.5f) + 1;
 +    o.sx = (int8_t)(40 * wall);
-+    if (vy < 0.0f && (st.mw_t & 1)) o.sx = (int8_t)(-80 * wall);
++    if (fr >= 20 && fr <= 30 && (fr & 1) == 0) o.sx = (int8_t)(-80 * wall);
++    (void)vy;
 +    return true;
 +  }
 +  // out of the wall jump (or any other air state): up-B again, a fresh B every other frame
@@ -5838,7 +5879,7 @@ index 0000000..2758f9e
 +    }
 +    if (enabled(FalconGentleman)) falcon_gentleman(o, st, pad, fighter, kind, delay);
 +    else { st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false; }
-+    if (enabled(SamusExtendedGrapple)) samus_grapple(o, st, pad, fighter, kind); else { st.sg_step = -1; st.sg_armed = false; }
++    if (enabled(SamusExtendedGrapple)) samus_grapple(o, st, pad, fighter, kind); else st.sg_step = -1;
 +    if (enabled(DocUpBCancel)) doc_upb_cancel(o, st, fighter, kind, facing, delay); else st.du_t = -1;
 +    if (enabled(PuffPoundLoop)) puff_pound_loop(o, st, pad, fighter, kind); else st.pp_on = false;
 +    if (enabled(TornadoMash)) tornado_mash(o, st, pad, fighter, kind); else st.tm_t = 0;
