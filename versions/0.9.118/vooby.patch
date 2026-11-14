@@ -2820,7 +2820,7 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..147a25f
+index 0000000..367e7d4
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
 @@ -0,0 +1,3153 @@
@@ -3107,7 +3107,7 @@ index 0000000..147a25f
 +     "On: as Samus, fire a missile in the air and keep B held as she lands: the mod goes on with\n"
 +     "land-cancelled missiles while B stays held. On the ground she short hops, on a platform she drops\n"
 +     "through, and the missile goes out just late enough to come out before the landing cuts its lag.\n"
-+     "Hold left or right to drift (and turn the missile that way). Let go of B to stop.\n"
++     "She keeps facing the way she started; the stick drifts her a little in the air. Let go of B to stop.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Samus},   // lab 11-13: FD and Stadium
 +    {"padmod_doc_upb_cancel", "Up-B cancel", "Dr. Mario: up-B on the ground is cancelled for you (the up-B cancel).",
 +     "On: as Dr. Mario, an up-B started on the ground gets the stick flicked back in its first frames\n"
@@ -3255,7 +3255,7 @@ index 0000000..147a25f
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
 +  int sg_step = -1; bool sg_active = false;   // Samus's extended grapple: in a grab; set up this stock
-+  int sm_phase = 0, sm_t = 0; float sm_prev_y = 0; bool sm_was_missile = false;   // Samus missile loop
++  int sm_phase = 0, sm_t = 0, sm_face = 1; float sm_prev_y = 0; bool sm_was_missile = false;   // Samus missile loop
 +  bool sm_plat = false; float sm_plat_y = 0, sm_plat_x0 = 0, sm_plat_x1 = 0;   // the platform she last stood on
 +  int du_t = -1, du_face = 1;           // Dr. Mario's up-B cancel: frames since the up-B, facing at its start
 +  bool mw_on = false; int mw_t = 0; float mw_prev_y = 0;   // Mario's wall jump up-B loop
@@ -4103,13 +4103,13 @@ index 0000000..147a25f
 +  if (!b || m < 0) { st.sm_phase = 0; return false; }
 +  if (st.sm_phase == 0) {
 +    if (!landed_one) return false;
-+    st.sm_phase = 1; st.sm_t = 0;
++    st.sm_phase = 1; st.sm_t = 0; st.sm_face = facing >= 0.0f ? 1 : -1;
 +    host::log("padmods: Samus missile loop");
 +  }
 +  o.remove |= kPadB;   // B goes in only on the frame a missile is fired
-+  const int face = facing >= 0.0f ? 1 : -1;
-+  const int x = pad.stick_x;
-+  const int dir = x >= 64 ? 1 : x <= -64 ? -1 : face;
++  // Always the way she faced when the loop began (TSC 11-13: "i want it to stay facing same dir
++  // always"); the stick only drifts her in the air.
++  const int dir = st.sm_face;
 +  ++st.sm_t;
 +  if (missile) { st.sm_phase = 3; return true; }   // firing: wait for the landing
 +  if (f->ground_or_air == 0) {
