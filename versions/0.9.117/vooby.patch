@@ -1419,7 +1419,7 @@ index 0000000..2fcb4c4
 +};
 diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
 new file mode 100644
-index 0000000..3be991f
+index 0000000..c13b8e4
 --- /dev/null
 +++ b/port/runtime/gx/vooby_ui.inl
 @@ -0,0 +1,633 @@
@@ -2009,7 +2009,7 @@ index 0000000..3be991f
 +      pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
 +      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
 +      pad_mods::FoxFalcoShine, pad_mods::Multishine, pad_mods::ShineWavedash, pad_mods::LedgeStall, pad_mods::ShieldShine, pad_mods::FoxLaserLoop, pad_mods::HoldLaser,
-+      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash, pad_mods::SamusExtendedGrapple,
++      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash, pad_mods::SamusExtendedGrapple, pad_mods::SamusMissileLoop,
 +      pad_mods::ZeldaShieldNayru, pad_mods::JigglyRest, pad_mods::JumpWithY, pad_mods::HumanTiming};
 +  if (tab == kBlockTab) {   // matchmaking reads the list whatever the mods' switches say
 +    ImGui::EndDisabled();
@@ -2810,10 +2810,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..751a737
+index 0000000..da1ae46
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2778 @@
+@@ -0,0 +1,2857 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3091,7 +3091,13 @@ index 0000000..751a737
 +     "up, down, up, then Z, inside frames 8..39 of the grab), and from then on until she loses a stock\n"
 +     "her grapple reaches about 3 times as far. The long beam grabs only at its tip: press Z or A when\n"
 +     "the tip is over them. A tap of Z is the normal grab. (NTSC only, as in the game.)\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Hidden},   // hidden: inputs go out but no longer beam seen yet,
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Hidden},
++    {"padmod_samus_missiles", "Hold B: landing missiles", "Samus: land a missile with B still held and more land-cancelled missiles keep coming.",
++     "On: as Samus, fire a missile in the air and keep B held as she lands: the mod goes on with\n"
++     "land-cancelled missiles while B stays held. On the ground she short hops, on a platform she drops\n"
++     "through, and the missile goes out just late enough to come out before the landing cuts its lag.\n"
++     "Hold left or right to drift (and turn the missile that way). Let go of B to stop.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},   // hidden: inputs go out but no longer beam seen yet,
 +};
 +
 +static_assert(sizeof kInfo / sizeof kInfo[0] == kCount, "one kInfo row per Mod, in enum order");
@@ -3206,7 +3212,8 @@ index 0000000..751a737
 +  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
-+  int sg_step = -1; bool sg_armed = false, sg_tap = false;   // Samus's extended grapple: input step, Z held at the grab's start
++  int sg_step = -1; bool sg_armed = false, sg_tap = false;
++  int sm_phase = 0, sm_t = 0; float sm_prev_y = 0; bool sm_was_missile = false;   // Samus missile loop   // Samus's extended grapple: input step, Z held at the grab's start
 +  int air_age = 1000;                   // frames since the fighter was last on the ground
 +  bool gwd_spot = false;                // one-button wavedash: this R is a spot dodge (stick down), theirs while held
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
@@ -3976,6 +3983,76 @@ index 0000000..751a737
 +  o.set_stick = true; o.sy = 0;
 +  o.sx = f == 41 ? (int8_t)(-80 * st.swd_dir) : f == 42 ? (int8_t)(80 * st.swd_dir) : 0;
 +  if (f == 41) host::log("padmods: Samus super wavedash %s", st.swd_dir > 0 ? "right" : "left");
++  return true;
++}
++
++// ---- Samus: B held after a landed missile = more land-cancelled missiles (SamusMissileLoop)
++// Lab 11-13 (Final Destination, short hop, smash missile): the missile comes out on the motion's
++// frame 15; landing earlier cancels it unfired, 15 frames or more before the landing it flies and
++// the landing (Landing, 42) cuts the rest. Air missiles are 351 (homing) and 352 (smash); a fresh
++// full push with B is the smash one. Samus falls at most 1.4 a frame, gravity 0.066 (lab).
++// Pokemon Stadium's platforms are 25 up; her short hop rises ~22.75, so from the ground it lands
++// back on the ground, and on a platform she drops through to the ground.
++constexpr int32_t kSamusAirMissile = 351, kSamusAirMissileSmash = 352;
++constexpr int kMissileOut = 15;            // the motion frame the missile comes out on
++constexpr float kSamusGrav = 0.066f, kSamusFall = 1.4f;
++// Frames until she reaches the ground (y 0) from y with speed vy (falling at most kSamusFall).
++int frames_to_ground(float y, float vy) {
++  int n = 0;
++  while (y > 0.0f && n < 200) { vy = std::max(vy - kSamusGrav, -kSamusFall); y += vy; ++n; }
++  return n;
++}
++bool samus_missiles(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind,
++                    float facing, int delay) {
++  const bool b = (pad.button & kPadB) != 0;
++  const int m = (f && kind == kKindSamus) ? f->motion_id : -1;
++  const bool missile = m == kSamusAirMissile || m == kSamusAirMissileSmash;
++  const float vy = st.py - st.sm_prev_y;
++  st.sm_prev_y = st.py;
++  const bool landed_one = st.sm_was_missile && !missile && f && f->ground_or_air == 0;
++  st.sm_was_missile = missile;
++  if (!b || m < 0) { st.sm_phase = 0; return false; }
++  if (st.sm_phase == 0) {
++    if (!landed_one) return false;
++    st.sm_phase = 1; st.sm_t = 0;
++    host::log("padmods: Samus missile loop");
++  }
++  o.remove |= kPadB;   // B goes in only on the frame a missile is fired
++  const int face = facing >= 0.0f ? 1 : -1;
++  const int x = pad.stick_x;
++  const int dir = x >= 64 ? 1 : x <= -64 ? -1 : face;
++  ++st.sm_t;
++  if (missile) { st.sm_phase = 3; return true; }   // firing: wait for the landing
++  if (f->ground_or_air == 0) {
++    if (st.sm_phase == 3) { st.sm_phase = 1; st.sm_t = 1; }   // a landed one: the next
++    if (st.sm_phase == 2 && st.sm_t > 40) { st.sm_phase = 0; return false; }   // never left the ground: given up
++    st.sm_phase = 2;
++    o.set_stick = true; o.sx = 0;
++    if (st.py > 2.0f) {   // a platform: through it (a quick push down, again and again)
++      // Lab 11-13 (Stadium): taps in the landing do nothing until it ends (30 frames); held down it
++      // goes to a crouch (SquatWait) at once, the taps then stand her up and the next crouch drops
++      // through: the drop 19 frames after landing instead of 35.
++      o.sy = (m == kLanding) ? -80 : (st.sm_t & 1) ? -80 : 0;
++    } else {               // the ground: a short hop (a press of one frame, again until the jumpsquat)
++      o.sy = 0;
++      if (m != kKneeBend && (st.sm_t & 1)) o.add |= jump_bit(SamusMissileLoop);
++      if (m == kKneeBend) o.remove |= kPadX | kPadY;
++    }
++    return true;
++  }
++  // In the air: their stick drifts her (no fast fall); the missile once the landing is near enough.
++  if (st.sm_phase == 4) {   // fire: the push from rest last frame, now full with B
++    o.set_stick = true; o.sx = (int8_t)(80 * dir); o.sy = 0; o.add |= kPadB;
++    st.sm_phase = 3;
++    return true;
++  }
++  o.set_stick = true; o.sx = pad.stick_x; o.sy = 0;
++  if (m == kKneeBend) return true;
++  const int left = frames_to_ground(st.py, vy);
++  if (st.sm_phase == 2 && left <= kMissileOut + 3 + delay) {
++    o.sx = 0;              // at rest one frame: the full push next is a smash (the strong missile)
++    st.sm_phase = 4;
++  }
 +  return true;
 +}
 +
@@ -5503,6 +5580,8 @@ index 0000000..751a737
 +    if (enabled(FalconGentleman)) falcon_gentleman(o, st, pad, fighter, kind, delay);
 +    else { st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false; }
 +    if (enabled(SamusExtendedGrapple)) samus_grapple(o, st, pad, fighter, kind); else { st.sg_step = -1; st.sg_armed = false; }
++    if (enabled(SamusMissileLoop)) samus_missiles(o, st, pad, fighter, kind, facing, delay);
++    else { st.sm_phase = 0; st.sm_was_missile = false; }
 +    if (enabled(SamusSuperWavedash)) samus_swd(o, st, pad, fighter, kind, delay);
 +    else { st.swd_dir = 0; st.swd_go = st.swd_hide_b = false; st.swd_hold = 0; }
 +    const bool stall = enabled(LedgeStall) && ledge_stall(o, st, pad, fighter, kind, delay);
@@ -5594,10 +5673,10 @@ index 0000000..751a737
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..3277ae3
+index 0000000..85a4aa3
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,173 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -5705,6 +5784,10 @@ index 0000000..3277ae3
 +  HoldLaser = 24,
 +  // Samus: Z held as a grab starts: the Extended Grapple input (D-pad up, down, up, Z in frames 8..39).
 +  SamusExtendedGrapple = 25,
++  // Samus: B kept held after a missile that landed (land-cancelled): more land-cancelled missiles,
++  // on the ground a short hop and on a platform a drop through, the missile fired late enough that
++  // it comes out and the landing cuts its lag. The stick drifts her in between.
++  SamusMissileLoop = 26,
 +  kCount
 +};
 +
