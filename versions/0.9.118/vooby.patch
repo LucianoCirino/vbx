@@ -55,7 +55,7 @@ index 275de45..8930fb6 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index d399410..19ece46 100644
+index 61f5afc..5455760 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
 @@ -59,8 +59,10 @@
@@ -77,7 +77,7 @@ index d399410..19ece46 100644
  // Both builds: the neutral netplay state. In the build without the Slippi layer it also answers the
  // Slippi names; in the normal build a peer-to-peer session (--p2p-*) is found through it.
  #include "netplay_state.h"
-@@ -1255,7 +1258,10 @@ uint32_t h_grid_color() { return gx::look_live().arcade_grid_rgb.load(std::memor
+@@ -1259,7 +1262,10 @@ uint32_t h_grid_color() { return gx::look_live().arcade_grid_rgb.load(std::memor
  void h_hud_combo(int32_t slot, int32_t link_slot, float percent, int32_t stunned) {
    gx::set_native_hud_combo(slot, link_slot, percent, stunned != 0);
  }
@@ -89,7 +89,7 @@ index d399410..19ece46 100644
  void h_hud_player(int32_t slot, int32_t present, int32_t damage, int32_t stocks, float tag_x, float tag_y,
                    int32_t tag_visible) {
    gx::set_native_hud_player(slot, present != 0, damage, stocks, tag_x, tag_y, tag_visible != 0);
-@@ -1380,9 +1386,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1384,9 +1390,28 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
    {
      char dll_path[MAX_PATH] = {};
      HMODULE module = GetModuleHandleA(g_dll.c_str());
@@ -120,7 +120,7 @@ index d399410..19ece46 100644
        std::ifstream in(path);
        // The offsets are right only for the library they were read from: a file from another build
        // (a library copied without it) left the wrong memory out and restored the sound driver's on
-@@ -1399,7 +1424,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1403,7 +1428,7 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          if (std::sscanf(line.c_str(), "# dll_size %llu", &value) == 1) { other_build = value != dll_size; continue; }
          unsigned long long offset = 0, size = 0;
          if (std::sscanf(line.c_str(), "%llx %llx", &offset, &size) == 2 && size) {
@@ -129,7 +129,7 @@ index d399410..19ece46 100644
            bytes += size;
          }
        }
-@@ -1409,7 +1434,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
+@@ -1413,7 +1438,8 @@ void begin_native_savestates(int slots = slippi::ROLLBACK_MAX_FRAMES) {   // a r
          host::log("online: WARNING: %s missing; sound driver state is inside snapshots", path.c_str());
        else {
          exclusions.insert(exclusions.end(), sound.begin(), sound.end());
@@ -139,7 +139,7 @@ index d399410..19ece46 100644
        }
      }
    }
-@@ -2245,6 +2271,7 @@ int32_t h_vi_idle_step() {
+@@ -2249,6 +2275,7 @@ int32_t h_vi_idle_step() {
  // --online-test ranked, once a frame (the game reads its pads every frame, in every scene). A game
  // that ended and is not back in Debug VS's match scene within 5 s (a results screen waiting for a
  // press) is asked back into it for the set's next game; once the set's room has closed the run ends.
@@ -147,7 +147,7 @@ index d399410..19ece46 100644
  void ranked_harness_tick() {
    if (g_online_test_mode != 0 || !g_online_test_started) return;
    RankedHarness& h = g_ranked_harness;
-@@ -2280,6 +2307,68 @@ void ranked_harness_tick() {
+@@ -2284,6 +2311,68 @@ void ranked_harness_tick() {
    host::log("online test: ranked, back to the match scene for the next game (from major %d state %d)", scene[0], scene[1]);
  }
  
@@ -216,7 +216,7 @@ index d399410..19ece46 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2307,6 +2396,92 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2311,6 +2400,92 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
@@ -309,7 +309,7 @@ index d399410..19ece46 100644
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -2395,10 +2570,19 @@ bool native_online_mode() {
+@@ -2399,10 +2574,19 @@ bool native_online_mode() {
    int32_t scene[2] = {0, 0};
    return g_game.practice(MU_PRACTICE_SCENE, scene, 2) == 0 && scene[0] == 8;
  }
@@ -329,7 +329,7 @@ index d399410..19ece46 100644
    auto it = g_paths.find(p);
    if (it != g_paths.end() && g_retail_view) {
      // The retail copy, or -1 for a file the retail game does not have. A pack costume that only
-@@ -3358,6 +3542,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+@@ -3362,6 +3546,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
  }
  
  void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
@@ -337,7 +337,7 @@ index d399410..19ece46 100644
  #ifdef YOUGAME_AGENT_TEST_HOOK
    if (command == 0x36)
      g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
-@@ -4213,7 +4398,7 @@ int run(void (*shutdown)(int)) {
+@@ -4217,7 +4402,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -1419,10 +1419,10 @@ index 0000000..2fcb4c4
 +};
 diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
 new file mode 100644
-index 0000000..c13b8e4
+index 0000000..9275106
 --- /dev/null
 +++ b/port/runtime/gx/vooby_ui.inl
-@@ -0,0 +1,633 @@
+@@ -0,0 +1,643 @@
 +// Vooby Mods window (F1 > Game > Vooby Mods > Open): a popup of its own over the settings, with a
 +// header, one tab per group and a card per mod. Every control is a real ImGui item (an invisible
 +// button drawn over), so mouse, keyboard and controller navigation all work as in the rest of F1.
@@ -1966,36 +1966,45 @@ index 0000000..c13b8e4
 +  const float sw = 200 * s, top = wp.y + hh, foot = 54 * s;
 +  d->AddRectFilled(ImVec2(wp.x, top), ImVec2(wp.x + sw, wp.y + ws.y), IM_COL32(10, 11, 22, 255), 16 * s, ImDrawFlags_RoundCornersBottomLeft);
 +  float ty = top + 18 * s;
-+  for (int g = 0; g < pad_mods::kGroupCount; ++g) {
++  // Sidebar order: the shared tabs, one per character, then the AI and Options.
++  static const int kTabOrder[] = {pad_mods::AllCharacters, pad_mods::FoxFalco, pad_mods::Falcon, pad_mods::Samus,
++                                  pad_mods::Zelda, pad_mods::Jigglypuff, pad_mods::Marios, pad_mods::DonkeyKong,
++                                  pad_mods::AiGroup, pad_mods::Options};
++  static_assert(sizeof kTabOrder / sizeof kTabOrder[0] == pad_mods::kGroupCount, "every group in the sidebar");
++  // Tabs closer together when they would not fit the window's height (the block list's tab too).
++  const float pitch = std::min(46 * s, (ws.y - hh - foot - 24 * s) / (float)(pad_mods::kGroupCount + 1));
++  const float tab_h = pitch - 6 * s;
++  for (int g : kTabOrder) {
 +    int total = 0, lit = 0;
 +    for (int m = 0; m < pad_mods::kCount; ++m)
 +      if (pad_mods::info(m).group == g) { ++total; lit += pad_mods::enabled(m); }
 +    if (!total) continue;
 +    ImGui::SetCursorScreenPos(ImVec2(wp.x + 12 * s, ty));
 +    ImGui::PushID(g);
-+    if (ImGui::InvisibleButton("##tab", ImVec2(sw - 24 * s, 40 * s))) tab = g;
++    if (ImGui::InvisibleButton("##tab", ImVec2(sw - 24 * s, tab_h))) tab = g;
 +    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
 +    const float t = ease(ImGui::GetID("t"), tab == g, 18.0f);
 +    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
 +    d->AddRectFilled(a, b, mix(hot ? IM_COL32(255, 255, 255, 12) : 0, IM_COL32(139, 92, 246, 60), t), 10 * s);
 +    if (t > 0.01f) d->AddRectFilled(ImVec2(a.x, a.y + 8 * s), ImVec2(a.x + 4 * s * t, b.y - 8 * s), kPink, 2 * s);
-+    d->AddText(ImVec2(a.x + 16 * s, a.y + 11 * s), tab == g ? kInk : kMuted, pad_mods::group_name(g));
++    d->AddText(ImVec2(a.x + 16 * s, (a.y + b.y) * 0.5f - ImGui::GetTextLineHeight() * 0.5f), tab == g ? kInk : kMuted, pad_mods::group_name(g));
 +    char n[16]; std::snprintf(n, sizeof n, "%d/%d", lit, total);
 +    const ImVec2 ns = ImGui::CalcTextSize(n);
-+    d->AddRectFilled(ImVec2(b.x - ns.x - 22 * s, a.y + 10 * s), ImVec2(b.x - 8 * s, b.y - 10 * s), lit ? IM_COL32(236, 72, 153, 70) : IM_COL32(255, 255, 255, 16), 10 * s);
-+    d->AddText(ImVec2(b.x - ns.x - 15 * s, a.y + 20 * s - ns.y * 0.5f), lit ? kInk : kMuted, n);
++    const float pad = std::max(4 * s, (tab_h - ns.y - 8 * s) * 0.5f);
++    d->AddRectFilled(ImVec2(b.x - ns.x - 22 * s, a.y + pad), ImVec2(b.x - 8 * s, b.y - pad), lit ? IM_COL32(236, 72, 153, 70) : IM_COL32(255, 255, 255, 16), 10 * s);
++    d->AddText(ImVec2(b.x - ns.x - 15 * s, (a.y + b.y) * 0.5f - ns.y * 0.5f), lit ? kInk : kMuted, n);
 +    ImGui::PopID();
-+    ty += 46 * s;
++    ty += pitch;
 +  }
 +  {   // the block list's tab
 +    ImGui::SetCursorScreenPos(ImVec2(wp.x + 12 * s, ty));
-+    if (ImGui::InvisibleButton("##tab_block", ImVec2(sw - 24 * s, 40 * s))) tab = kBlockTab;
++    if (ImGui::InvisibleButton("##tab_block", ImVec2(sw - 24 * s, tab_h))) tab = kBlockTab;
 +    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
 +    const float t = ease(ImGui::GetID("##tab_block_t"), tab == kBlockTab, 18.0f);
 +    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
 +    d->AddRectFilled(a, b, mix(hot ? IM_COL32(255, 255, 255, 12) : 0, IM_COL32(139, 92, 246, 60), t), 10 * s);
 +    if (t > 0.01f) d->AddRectFilled(ImVec2(a.x, a.y + 8 * s), ImVec2(a.x + 4 * s * t, b.y - 8 * s), kPink, 2 * s);
-+    d->AddText(ImVec2(a.x + 16 * s, a.y + 11 * s), tab == kBlockTab ? kInk : kMuted, "Block list");
++    d->AddText(ImVec2(a.x + 16 * s, (a.y + b.y) * 0.5f - ImGui::GetTextLineHeight() * 0.5f), tab == kBlockTab ? kInk : kMuted, "Block list");
 +  }
 +
 +  // ---- cards
@@ -2009,8 +2018,9 @@ index 0000000..c13b8e4
 +      pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
 +      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
 +      pad_mods::FoxFalcoShine, pad_mods::Multishine, pad_mods::ShineWavedash, pad_mods::LedgeStall, pad_mods::ShieldShine, pad_mods::FoxLaserLoop, pad_mods::HoldLaser,
-+      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash, pad_mods::SamusExtendedGrapple, pad_mods::SamusMissileLoop,
-+      pad_mods::ZeldaShieldNayru, pad_mods::JigglyRest, pad_mods::JumpWithY, pad_mods::HumanTiming};
++      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash, pad_mods::SamusExtendedGrapple, pad_mods::SamusMissileLoop, pad_mods::SamusHoldJab,
++      pad_mods::DocUpBCancel, pad_mods::MarioWallUpB, pad_mods::TornadoMash, pad_mods::DkPunch9, pad_mods::PivotFsmash,
++      pad_mods::ZeldaShieldNayru, pad_mods::JigglyRest, pad_mods::PuffPoundLoop, pad_mods::JumpWithY, pad_mods::HumanTiming};
 +  if (tab == kBlockTab) {   // matchmaking reads the list whatever the mods' switches say
 +    ImGui::EndDisabled();
 +    changed |= block_tab();
@@ -2662,10 +2672,10 @@ index 0000000..23d98fd
 +
 +}  // namespace ai_takeover
 diff --git a/port/runtime/host/host.h b/port/runtime/host/host.h
-index 248eccd..ba86e78 100644
+index 0b2092d..f056869 100644
 --- a/port/runtime/host/host.h
 +++ b/port/runtime/host/host.h
-@@ -304,6 +304,11 @@ void input_script_peek(uint32_t retrace, PadState out[4]);
+@@ -305,6 +305,11 @@ void input_script_peek(uint32_t retrace, PadState out[4]);
  void input_note_pad_frame(int32_t frame);
  // The state the game read on the last PADRead, for the on-screen controller overlay.
  void input_last_pads(PadState out[4]);
@@ -2810,10 +2820,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..da1ae46
+index 0000000..2758f9e
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2857 @@
+@@ -0,0 +1,3112 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -2996,7 +3006,8 @@ index 0000000..da1ae46
 +     "On: pressing R while hanging on the ledge does a ledgedash, a waveland back onto the stage:\n"
 +     "a C-stick flick down lets go, the double jump goes one frame later, and your R goes in with\n"
 +     "the stick angled at the stage on the frame measured for your character, so you land on the\n"
-+     "stage as early as the game allows (Fox lands 5 frames after letting go). Your next press\n"
++     "stage as early as the game allows (Fox lands 5 frames after letting go). Hold the stick to pick\n"
++     "the air dodge's angle yourself, as in a wavedash; at rest it is the measured one. Your next press\n"
 +     "comes out on the first frame you can act. Characters not measured yet: R is unchanged.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
 +    {"padmod_slide_stretch", "Stretch backward slides", "After a wavedash or waveland that slides you backward, hold the button or gently tilt back to slide further (Ganondorf, Marth, Roy).",
@@ -3045,12 +3056,12 @@ index 0000000..da1ae46
 +     "rapid jab. The game counts every A press and release in a jab; the mod holds A for you and puts\n"
 +     "the next press inside the hit's freeze (hitlag), where the game does not count it. Slow presses\n"
 +     "work on hit. On a whiff the third jab only comes from mashing (two slow whiffed jabs stop there).\n"
-+     "Offline (no input delay). Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},   // not working yet (lab 11-10)
++     "Offline (no input delay). Offline, Direct and Teams; off in Ranked, Unranked and Party.", Falcon},   // not working yet (lab 11-10)
 +    {"padmod_samus_swd", "Hold down-B: super wavedash", "Samus: down-B with B held slides far in the direction you hold.",
 +     "On: as Samus on the ground, press down-B and keep B held, then hold left or right: as the\n"
 +     "bomb's hop lands the mod taps the stick away and back on the exact frames and lets it rest,\n"
 +     "a super wavedash in that direction. Let go of B (or hold no direction) for a plain bomb.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},   // lab 11-13: slides at 5.8 off FD's edge
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Samus},   // lab 11-13: slides at 5.8 off FD's edge
 +    {"padmod_uptilt_button", "Up-tilt button", "The jump button you do not use (Options) is an up-tilt on the ground, also out of a dash or a run.",
 +     "On: on the ground, the X/Y button you do not jump with (Options: I jump with Y) gives an up-tilt: A with the stick tilted up\n"
 +     "(not far enough for an up-smash or a jump). Out of a dash or a run the mod crouches first,\n"
@@ -3061,24 +3072,24 @@ index 0000000..da1ae46
 +     "On: as Zelda, pressing B while shielding jumps out of the shield and does Nayru's Love (B with\n"
 +     "the stick at rest) on the first frame off the ground, like the shine out of shield. B in shield\n"
 +     "stun waits for the shield. Wins over 'Up-B out of shield' for Zelda.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Zelda},
 +    {"padmod_run_jab", "Jab out of a run", "Let go of the stick and press A while dashing or running: a jab. Stick held: dash attack.",
 +     "On: A with the stick let go (in the middle) while dashing or running crouches for you first\n"
 +     "(the stick down for a frame or two), then puts A in with the stick at rest: a jab. With the\n"
 +     "stick still pushed, A is your dash attack as always. Any fighter.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
-+    {"padmod_hold_jab", "Hold A: keep jabbing", "Keep A held and the jab goes on by itself (jab combo, rapid jab, Pikachu's endless jab).",
++    {"padmod_hold_jab", "Hold A: keep jabbing", "Keep A held and the jab (or down tilt) goes on by itself: rapid jabs, Pikachu's endless jab, Ness's down tilt.",
 +     "On: hold A through a jab and the mod lets go and presses A again every frame for you, so the\n"
-+     "jab combo and the rapid jab keep going until you let go of A. A quick tap is one jab as\n"
-+     "before. Any fighter but Captain Falcon (his would always turn into the rapid jab). Samus: jab 1\n"
-+     "only, again and again, each one cancelled into a crouch as soon as it can be.\n"
++     "jab combo and the rapid jab keep going until you let go of A. With the stick held down the same\n"
++     "for down tilts (Ness's repeated down tilt). A quick tap is one jab as before. Any fighter but\n"
++     "Captain Falcon (his would always turn into the rapid jab); Samus has her own in her tab.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
 +    {"padmod_jiggly_rest", "Auto rest", "Jigglypuff: hold the button you do not jump with and she rests the moment an opponent is in range.",
 +     "On: as Jigglypuff, hold the X/Y button you do not jump with (Options: I jump with Y). While it\n"
 +     "is held, the moment the nearest opponent is close enough for Rest to hit, the mod puts in down-B\n"
 +     "(again every other frame until she can act). Let go and the button does nothing. Range measured\n"
 +     "in the game (Rest's own hitbox, with a margin); Teams: only the other team counts.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Jigglypuff},
 +    {"padmod_hold_laser", "Hold B: lasers", "Fox and Falco: keep B held and the lasers keep firing, standing and in the air.",
 +     "On: as Fox or Falco, after B starts a laser, keep holding it: the mod presses B again every other\n"
 +     "frame for you, so the laser fires again and again on the ground and in the air, and when one\n"
@@ -3097,7 +3108,37 @@ index 0000000..da1ae46
 +     "land-cancelled missiles while B stays held. On the ground she short hops, on a platform she drops\n"
 +     "through, and the missile goes out just late enough to come out before the landing cuts its lag.\n"
 +     "Hold left or right to drift (and turn the missile that way). Let go of B to stop.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FalconSamus},   // hidden: inputs go out but no longer beam seen yet,
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Samus},   // lab 11-13: FD and Stadium
++    {"padmod_doc_upb_cancel", "Up-B cancel", "Dr. Mario: up-B on the ground is cancelled for you (the up-B cancel).",
++     "On: as Dr. Mario, an up-B started on the ground gets the stick flicked back in its first frames\n"
++     "for you, the up-B cancel. Up-B in the air is unchanged.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Marios},
++    {"padmod_mario_wall_upb", "Hold B: wall jump up-B", "Mario: keep B held after up-B next to a wall and he wall jumps and up-Bs again and again.",
++     "On: as Mario, up-B into a wall and keep B held: as the up-B starts falling the mod flicks the\n"
++     "stick away for the wall jump, then up-B again, over and over up the wall. Let go of B to stop.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Marios},
++    {"padmod_pivot_fsmash", "Pivot forward smash", "In a dash, a smash attack backward is a pivot forward smash that way.",
++     "On: in a dash, the C-stick pushed back (or A with the stick pushed back) gives a pivot forward\n"
++     "smash: the mod dashes back one frame, lets the stick rest so it pivots, then the forward smash.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
++    {"padmod_samus_hold_jab", "Hold A: jab, crouch, jab", "Samus: keep A held and only her first jab comes out, again and again.",
++     "On: as Samus, keep A held from a jab: the mod cancels jab 1 into a crouch and jabs again from the\n"
++     "crouch, jab, crouch, jab, while A stays held. A tap is one jab.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Samus},
++    {"padmod_puff_pound_loop", "Hold side-B: rising pounds", "Jigglypuff: side-B in the air and keep B held: rising Pounds over and over the way you hold.",
++     "On: as Jigglypuff in the air, side-B and keep B held: each Pound is a rising Pound (the stick goes\n"
++     "up as it takes its angle) and when it ends the next one starts, toward the side you hold. Let go of\n"
++     "B (or land) to stop.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Jigglypuff},
++    {"padmod_tornado_mash", "Hold B: down-B rises", "Mario, Dr. Mario, Luigi: keep B held in down-B and the mod mashes B for you, so it gains height.",
++     "On: as Mario, Dr. Mario or Luigi, keep B held through the down-B (Tornado, Cyclone): B goes up and\n"
++     "down every other frame for you, each press the game's lift. Let go of B and it is yours again.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Marios},
++    {"padmod_dk_punch9", "Giant Punch stops at 9", "Donkey Kong: the neutral-B charge is stored at 9 swings, and comes out as a 9 punch.",
++     "On: as Donkey Kong, charging the Giant Punch stops by itself at 9 swings (the mod presses the\n"
++     "shield for the cancel), and when you start it again with 9 stored the punch is thrown at once,\n"
++     "before a 10th swing would make it a full charge. B during the charge still throws it early.\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", DonkeyKong},
 +};
 +
 +static_assert(sizeof kInfo / sizeof kInfo[0] == kCount, "one kInfo row per Mod, in enum order");
@@ -3208,12 +3249,20 @@ index 0000000..da1ae46
 +  int gj_motion = -1, gj_count = 0, gj_phase = 0;   // Falcon's gentleman: the jab seen, counted A edges, step
 +  bool gj_want = false, gj_lag_seen = false;       // a next jab asked for; this jab's hitlag seen
 +  float gj_last_frame = -1.0f;                     // its animation frame last time (a repeat = hitlag)
++  int gj_held = 0; bool gj_rel = false;            // frames A held (theirs); standing with A held: let go, then press
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
 +  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
 +  int sg_step = -1; bool sg_armed = false, sg_tap = false;
-+  int sm_phase = 0, sm_t = 0; float sm_prev_y = 0; bool sm_was_missile = false;   // Samus missile loop   // Samus's extended grapple: input step, Z held at the grab's start
++  int sm_phase = 0, sm_t = 0; float sm_prev_y = 0; bool sm_was_missile = false;   // Samus missile loop
++  int du_t = -1, du_face = 1;           // Dr. Mario's up-B cancel: frames since the up-B, facing at its start
++  bool mw_on = false; int mw_t = 0; float mw_prev_y = 0;   // Mario's wall jump up-B loop
++  int pf_t = -1, pf_face = 1;           // pivot forward smash: step, facing in the dash
++  uint16_t pf_btn_was = 0; int8_t pf_cx_was = 0;
++  int tm_t = 0; bool tm_hide = false;   // down-B mash clock; B kept from the game after it until let go
++  int dk_sw = 0; float dk_last = -1.0f; int dk_t = 0; bool dk_logged = false;   // DK: swings counted (stored too), last loop frame
++  bool pp_on = false; int pp_t = 0, pp_motion = -1, pp_pre = -1, pp_dir = 1, pp_fire = 0;   // Puff's pound loop   // Samus's extended grapple: input step, Z held at the grab's start
 +  int air_age = 1000;                   // frames since the fighter was last on the ground
 +  bool gwd_spot = false;                // one-button wavedash: this R is a spot dodge (stick down), theirs while held
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
@@ -3711,21 +3760,33 @@ index 0000000..da1ae46
 +// Offline (no input delay) only: with delay the frozen frames are not the ones the pad lands on.
 +constexpr int32_t kKindFalcon = 0x02 + 1;
 +constexpr int32_t kAttack11 = 44, kAttack12 = 45, kAttack13 = 46;
++constexpr int kGentlemanHold = 6;   // A down this many frames is "held" (a tap is shorter)
 +bool falcon_gentleman(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
 +                      int delay) {
 +  const bool a = (pad.button & kPadA) != 0, fresh = a && !(st.buttons_was_down & kPadA);
++  st.gj_held = a ? std::min(st.gj_held + 1, 1000) : 0;
++  // A held (TSC 11-13: "if i hold A it should auto gentleman at fastest rate"): every next jab is
++  // asked for as soon as it can be, and standing (Wait) with A still held starts the next one.
++  const bool held = st.gj_held >= kGentlemanHold;
 +  const int m = (fighter && kind == kKindFalcon && fighter->ground_or_air == 0) ? fighter->motion_id : -1;
 +  if (m != kAttack11 && m != kAttack12 && m != kAttack13) {
 +    st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false;
++    if (m == kWait && held) {   // a fresh press for jab 1: up one frame, then down
++      st.gj_rel = !st.gj_rel;
++      if (st.gj_rel) o.remove |= kPadA; else o.add |= kPadA;
++      return true;
++    }
++    st.gj_rel = false;
 +    return false;
 +  }
++  st.gj_rel = false;
 +  const bool frozen = m == st.gj_motion && fighter->anim_frame == st.gj_last_frame;
 +  const bool first_frozen = frozen && !st.gj_lag_seen;
 +  if (m != st.gj_motion) { st.gj_motion = m; st.gj_want = false; st.gj_phase = 0; st.gj_lag_seen = false; }
 +  st.gj_last_frame = fighter->anim_frame;
 +  if (frozen) st.gj_lag_seen = true;
 +  if (m == kAttack13) { o.add |= kPadA; return true; }   // no edge in jab 3
-+  if (fresh) st.gj_want = true;
++  if (fresh || held) st.gj_want = true;   // a tap is kept until the next jab can take it
 +  switch (st.gj_phase) {
 +    case 1: o.remove |= kPadA; st.gj_phase = 2; return true;                    // a counted release (whiff path)
 +    case 2: o.add |= kPadA; st.gj_phase = 3; ++st.gj_count; return true;        // the press that queues the next jab
@@ -3871,6 +3932,7 @@ index 0000000..da1ae46
 +// for them while they hold it, also through the Wait between two jabs. A tap shorter than that is
 +// one jab as before. Not Captain Falcon: any 3 presses turn his into the rapid jab.
 +constexpr int kHoldJabAfter = 8;
++constexpr int32_t kAttackLw3 = 57;   // down tilt
 +// Samus (TSC 11-13: "only the first jab... jab crouch crouch jab"): from jab 1 the stick goes down
 +// (soft, no platform drop) with A up, so the jab is cancelled into a crouch the first frame it can
 +// be, and from the crouch A goes in with the stick at rest: jab 1 again. After 3 frames held.
@@ -3878,11 +3940,14 @@ index 0000000..da1ae46
 +bool hold_jab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind) {
 +  constexpr int32_t kFalcon = 0x02 + 1, kSamus = 0x0D + 1;
 +  const int m = fighter ? fighter->motion_id : -1;
-+  const bool jab = m >= 44 && m <= 49;   // Attack11, 12, 13, Attack100Start, Loop, End
 +  const bool samus = kind == kSamus, squat = m == kSquat || m == 40 || m == 41;
++  // Down tilt too (TSC 11-13: "ness down tilt"): A held with the stick down, A goes up and down and
++  // each press is the next down tilt (from the tilt or the crouch it ends in).
++  const bool down = pad.stick_y <= -40 && !samus;
++  const bool jab = (m >= 44 && m <= 49) || (down && m == kAttackLw3);   // Attack11..13, Attack100*, AttackLw3
 +  const int after = samus ? kHoldJabAfterSamus : kHoldJabAfter;
 +  if (!(pad.button & kPadA) || !fighter || fighter->ground_or_air != 0 || kind == kFalcon ||
-+      (!jab && m != kWait && !(samus && squat)) || (!jab && st.hj_held < after)) {
++      (!jab && m != kWait && !(samus && squat) && !(down && squat)) || (!jab && st.hj_held < after)) {
 +    st.hj_held = 0; st.hj_t = 0;
 +    return false;
 +  }
@@ -4054,6 +4119,186 @@ index 0000000..da1ae46
 +    st.sm_phase = 4;
 +  }
 +  return true;
++}
++
++extern float g_stage_edge;
++
++// ---- Dr. Mario: up-B on the ground = the up-B cancel (DocUpBCancel)
++// SmashWiki (Up-B cancel): Dr. Mario's Super Jump Punch is cancelled by flicking the stick opposite
++// his facing in its first four frames. Mario's and Dr. Mario's up-B: SpecialHi 347 (ground), 348 (air).
++constexpr int32_t kKindDoc = 0x15 + 1, kKindMario = 0x00 + 1;
++constexpr int32_t kMarioUpB = 347, kMarioAirUpB = 348, kPassiveWallJump = 203, kFallSpecial = 35;
++bool doc_upb_cancel(Out& o, PortState& st, const MuLcancelFighter* f, int32_t kind, float facing, int delay) {
++  static const int at = std::getenv("MU_TEST_DU_AT") ? std::atoi(std::getenv("MU_TEST_DU_AT")) : 2;   // tests
++  static const int len = std::getenv("MU_TEST_DU_LEN") ? std::atoi(std::getenv("MU_TEST_DU_LEN")) : 2;
++  const int m = (f && kind == kKindDoc) ? f->motion_id : -1;
++  if (m != kMarioUpB) { st.du_t = -1; return false; }
++  if (st.du_t < 0) {
++    st.du_t = 0; st.du_face = facing >= 0.0f ? 1 : -1;
++    host::log("padmods: Dr. Mario up-B cancel");
++  }
++  const int fr = (int)(f->anim_frame + 0.5f) + 1 + delay;   // the up-B frame the game reads this pad on
++  ++st.du_t;
++  if (fr >= at && fr < at + len) { o.set_stick = true; o.sx = (int8_t)(-80 * st.du_face); o.sy = 0; return true; }
++  return false;
++}
++
++// ---- Mario: B held through up-B = wall jump, up-B, wall jump... (MarioWallUpB)
++// ftMr_SpecialHi_Coll: once the up-B falls (cmd_vars[0] set, falling) its collision is
++// ft_800831CC, which checks a wall jump (ftWallJump_8008169C: touching a wall, the stick pushed
++// away past x76C with the push fresh, active_timer < x770). FallSpecial checks none, so the wall
++// jump has to come while the up-B itself falls. After it, up-B again.
++bool mario_wall_upb(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind, float facing) {
++  const bool b = (pad.button & kPadB) != 0;
++  const int m = (f && kind == kKindMario) ? f->motion_id : -1;
++  const bool upb = m == kMarioUpB || m == kMarioAirUpB;
++  const float vy = st.py - st.mw_prev_y;
++  st.mw_prev_y = st.py;
++  if (!b || m < 0 || f->ground_or_air == 0 || m == kFallSpecial) { st.mw_on = false; return false; }
++  if (!st.mw_on) {
++    if (!upb) return false;
++    st.mw_on = true; st.mw_t = 0;
++    host::log("padmods: Mario wall jump up-B");
++  }
++  ++st.mw_t;
++  o.remove |= kPadB;
++  // the wall: in front, or beside/under the stage its side
++  int wall = facing >= 0.0f ? 1 : -1;
++  // below the stage's top the wall is the stage's side, toward its middle (lab 11-13: under FD's
++  // ledge facing away, "in front" pushed the wrong way)
++  if (st.py < -2.0f) wall = st.px > 0 ? -1 : 1;
++  o.set_stick = true; o.sy = 0;
++  if (upb) {   // into the wall; once it falls, away full every other frame (each a fresh push)
++    o.sx = (int8_t)(40 * wall);
++    if (vy < 0.0f && (st.mw_t & 1)) o.sx = (int8_t)(-80 * wall);
++    return true;
++  }
++  // out of the wall jump (or any other air state): up-B again, a fresh B every other frame
++  o.sx = 0; o.sy = 80;
++  if (st.mw_t & 1) o.add |= kPadB;
++  return true;
++}
++
++// ---- Any fighter: a backward smash attack in a dash = pivot forward smash (PivotFsmash)
++// Dash (20) facing one way; the C-stick pushed back, or A with the stick back: the stick goes back
++// one frame (a dash back), then at rest one frame (the pivot), then the C-stick forward the new way
++// (the forward smash, 58..62) for 2 frames.
++constexpr int32_t kDash = 20, kFsmashFirst = 58, kFsmashLast = 62;
++bool pivot_fsmash(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, float facing) {
++  const int face = facing >= 0.0f ? 1 : -1;
++  const bool a_fresh = (pad.button & kPadA) && !(st.pf_btn_was & kPadA);
++  const bool c_back = pad.sub_x * face <= -64 && st.pf_cx_was * face > -64;
++  st.pf_btn_was = pad.button; st.pf_cx_was = pad.sub_x;
++  const int m = f ? f->motion_id : -1;
++  if (st.pf_t < 0) {
++    if (m != kDash || f->ground_or_air != 0) return false;
++    if (!(c_back || (a_fresh && pad.stick_x * face <= -64))) return false;
++    st.pf_t = 0; st.pf_face = face;
++    host::log("padmods: pivot forward smash");
++  }
++  const int t = st.pf_t++;
++  o.remove |= kPadA;
++  o.set_cstick = true; o.cx = 0; o.cy = 0;
++  o.set_stick = true; o.sy = 0;
++  if (t == 0) { o.sx = (int8_t)(-80 * st.pf_face); return true; }   // dash back
++  o.sx = 0;                                                           // at rest: the pivot
++  if (t >= 2) o.cx = (int8_t)(-80 * st.pf_face);                    // forward smash the new way
++  if (t >= 3) st.pf_t = -1;   // done (the forward smash shows from here: 58..62)
++  return true;
++}
++
++// ---- Jigglypuff: side-B held in the air = rising Pounds on and on (PuffPoundLoop)
++// ftPr_SpecialAirS_Phys: on the Pound's script frame (cmd_vars[0]) its speed is set at an angle from
++// the stick's y then (calcAngleRadians, up = rising). Up before the Pound starts would be up-B
++// (Sing), so the stick goes up only once the Pound shows. Pound leaves her free (no helpless), so
++// when it ends the next one goes in. Its motion id is learned from their own first side-B.
++bool puff_pound_loop(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind) {
++  const bool b = (pad.button & kPadB) != 0, fresh = b && !(st.buttons_was_down & kPadB);
++  const int m = (f && kind == kKindPuff && f->ground_or_air != 0) ? f->motion_id : -1;
++  const int x = pad.stick_x;
++  if (!b || m < 0) { st.pp_on = false; return false; }
++  if (!st.pp_on) {   // their own side-B in the air is the first Pound
++    if (!fresh || std::abs(x) < 64) return false;
++    st.pp_on = true; st.pp_motion = -1; st.pp_pre = m; st.pp_t = 0; st.pp_fire = 0; st.pp_dir = x > 0 ? 1 : -1;
++    host::log("padmods: Jigglypuff pound loop");
++    return false;
++  }
++  if (std::abs(x) >= 64) st.pp_dir = x > 0 ? 1 : -1;
++  ++st.pp_t;
++  o.remove |= kPadB;
++  if (st.pp_motion < 0) {   // the motion their press started: the Pound
++    if (m != st.pp_pre) st.pp_motion = m;
++    else if (st.pp_t > 8) { st.pp_on = false; return true; }   // no Pound came: stop
++  }
++  o.set_stick = true;
++  if (m == st.pp_motion) { o.sx = 0; o.sy = 80; st.pp_fire = 0; return true; }   // pounding: up = rising
++  static const int early = std::getenv("MU_TEST_PP_EARLY") ? std::atoi(std::getenv("MU_TEST_PP_EARLY")) : 1;   // tests
++  if (st.pp_motion < 0) {   // their press went in last frame: up now (the angle may be read at once)
++    if (early) { o.sx = 0; o.sy = 80; } else { o.sx = (int8_t)(80 * st.pp_dir); o.sy = 0; }
++    return true;
++  }
++  // out of it: the next side-B (a fresh B with the stick full to the side)
++  o.sx = (int8_t)(80 * st.pp_dir); o.sy = 0;
++  if (early && (st.pp_fire & 1) == 0 && st.pp_fire > 0) { o.sx = 0; o.sy = 80; }   // the frame after a press: up
++  if (st.pp_fire++ & 1) o.add |= kPadB;
++  if (st.pp_fire > 12) { st.pp_on = false; }   // never took it: stop
++  return true;
++}
++
++// ---- Mario / Dr. Mario / Luigi: B held in down-B = mashed (TornadoMash)
++// ftmariospeciallw.c / ftluigispeciallw.c: each fresh B (pressed_buttons) in the move adds
++// tap_y_vel_max upward. Down-B: Mario's and Dr. Mario's SpecialLw 349/350, Luigi's 357/358.
++bool tornado_mash(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind) {
++  constexpr int32_t kKindLuigi = 0x11 + 1;
++  const int m = f ? f->motion_id : -1;
++  const bool marios = kind == kKindMario || kind == kKindDoc;
++  const bool spin = (marios && (m == 349 || m == 350)) || (kind == kKindLuigi && (m == 357 || m == 358));
++  const bool b = (pad.button & kPadB) != 0;
++  if (!spin) {
++    st.tm_t = 0;
++    // B still held from the mash: kept back (lab 11-13: it came out as a fireball after the Tornado)
++    if (st.tm_hide && b) { o.remove |= kPadB; return true; }
++    st.tm_hide = false;
++    return false;
++  }
++  if (!b) { st.tm_t = 0; st.tm_hide = false; return false; }
++  st.tm_hide = true;
++  if (st.tm_t++ & 1) o.add |= kPadB; else o.remove |= kPadB;
++  return true;
++}
++
++// ---- Donkey Kong: Giant Punch stored at 9 swings (DkPunch9)
++// ftdonkeyspecialn.c: the charge (x222C) goes up by one each time SpecialNLoop's animation is at
++// frame 0, and is kept when the charge is cancelled; at x2C_MAX_ARM_SWINGS (10) it stops as a full
++// charge. In the loop, L/R pressed sets the cancel, done at the loop's next frame 0; B throws the
++// punch with the charge it has. Starting again with a charge stored goes through Start into the
++// loop, whose first frame 0 would add one (9 -> 10, full), so with 9 stored B is pressed on it.
++// DK motions: SpecialNStart 369, Loop 370, Cancel 371, N 372, Full 373, air 374..378.
++constexpr int32_t kKindDK = 0x03 + 1;
++constexpr int kDkSwings = 9;
++bool dk_punch9(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind) {
++  static const int off = std::getenv("MU_TEST_DK_OFF") ? std::atoi(std::getenv("MU_TEST_DK_OFF")) : 0;   // tests
++  const int m = (f && kind == kKindDK) ? f->motion_id : -1;
++  if (m < 0) { st.dk_last = -1.0f; return false; }
++  if (m < kWait) st.dk_sw = 0;                                   // dead / respawning: the charge is gone
++  if (m == 372 || m == 373 || m == 377 || m == 378) st.dk_sw = 0;   // thrown
++  const bool loop = m == 370 || m == 375;
++  if (!loop) { st.dk_last = -1.0f; st.dk_t = 0; st.dk_logged = false; return false; }
++  const bool first = st.dk_last < 0.0f;
++  if (first || f->anim_frame < st.dk_last) ++st.dk_sw;           // frame 0 of a swing: one more
++  st.dk_last = f->anim_frame;
++  ++st.dk_t;
++  if (first && st.dk_sw - 1 >= kDkSwings + off) {                // 9 were stored: throw it now
++    o.add |= kPadB;
++    host::log("padmods: DK punch thrown with %d stored", st.dk_sw - 1);
++    return true;
++  }
++  if (st.dk_sw >= kDkSwings + off) {                             // in the 9th swing: cancel at its end
++    if (st.dk_t & 1) o.add |= kPadR; else o.remove |= kPadR;
++    if (st.dk_sw == kDkSwings + off && st.dk_t <= 1000 && !st.dk_logged) { st.dk_logged = true; host::log("padmods: DK charge stored at %d", st.dk_sw); }
++    return true;
++  }
++  return false;
 +}
 +
 +bool shine_z_grab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind,
@@ -4832,6 +5077,11 @@ index 0000000..da1ae46
 +    }
 +    int dx, dy;
 +    ledge_dodge_stick(kind, st.ld_face, dx, dy);
++    // Their stick picks the air dodge's angle, as in a wavedash (TSC 11-13: "angle should be
++    // dictated by control stick"); at rest, the measured angle above.
++    if (std::abs((int)pad.stick_x) >= kStickDeadzone || std::abs((int)pad.stick_y) >= kStickDeadzone) {
++      dx = pad.stick_x; dy = pad.stick_y;
++    }
 +    // A or B pressed before the air dodge (TSC 11-07: "hold down and press B, why doesn't it down-B,
 +    // it's neutral"): kept from the game (the stick here is the mod's) and handed to the landing-lag
 +    // buffer, which lets it in when the fighter can act, aimed by their stick then.
@@ -5324,7 +5574,12 @@ index 0000000..da1ae46
 +    case FoxFalco: return "Fox & Falco";
 +    case Options: return "Options";
 +    case AiGroup: return "AI takeover";
-+    case FalconSamus: return "Other characters";
++    case Falcon: return "Captain Falcon";
++    case Samus: return "Samus";
++    case Zelda: return "Zelda";
++    case Jigglypuff: return "Jigglypuff";
++    case Marios: return "Mario, Luigi & Doc";
++    case DonkeyKong: return "Donkey Kong";
 +    default: return "";
 +  }
 +}
@@ -5576,10 +5831,20 @@ index 0000000..da1ae46
 +    if (st.oos_shine_recent > 0) --st.oos_shine_recent;
 +    const bool rj = enabled(RunJab) && run_jab(o, st, pad, fighter, delay);
 +    if (!enabled(RunJab)) st.rj_frame = -1;
-+    if (enabled(HoldJab) && !rj) hold_jab(o, st, pad, fighter, kind); else { st.hj_held = 0; st.hj_t = 0; }
++    {   // Samus's jab loop has its own switch (her tab); everyone else's hold-A jab is HoldJab
++      constexpr int32_t kSamusKind = 0x0D + 1;
++      const bool hj = kind == kSamusKind ? enabled(SamusHoldJab) : enabled(HoldJab);
++      if (hj && !rj) hold_jab(o, st, pad, fighter, kind); else { st.hj_held = 0; st.hj_t = 0; }
++    }
 +    if (enabled(FalconGentleman)) falcon_gentleman(o, st, pad, fighter, kind, delay);
 +    else { st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false; }
 +    if (enabled(SamusExtendedGrapple)) samus_grapple(o, st, pad, fighter, kind); else { st.sg_step = -1; st.sg_armed = false; }
++    if (enabled(DocUpBCancel)) doc_upb_cancel(o, st, fighter, kind, facing, delay); else st.du_t = -1;
++    if (enabled(PuffPoundLoop)) puff_pound_loop(o, st, pad, fighter, kind); else st.pp_on = false;
++    if (enabled(TornadoMash)) tornado_mash(o, st, pad, fighter, kind); else st.tm_t = 0;
++    if (enabled(DkPunch9)) dk_punch9(o, st, pad, fighter, kind); else st.dk_last = -1.0f;
++    if (enabled(MarioWallUpB)) mario_wall_upb(o, st, pad, fighter, kind, facing); else st.mw_on = false;
++    if (enabled(PivotFsmash)) pivot_fsmash(o, st, pad, fighter, facing); else st.pf_t = -1;
 +    if (enabled(SamusMissileLoop)) samus_missiles(o, st, pad, fighter, kind, facing, delay);
 +    else { st.sm_phase = 0; st.sm_was_missile = false; }
 +    if (enabled(SamusSuperWavedash)) samus_swd(o, st, pad, fighter, kind, delay);
@@ -5673,10 +5938,10 @@ index 0000000..da1ae46
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..85a4aa3
+index 0000000..2eb3134
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,195 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -5788,11 +6053,33 @@ index 0000000..85a4aa3
 +  // on the ground a short hop and on a platform a drop through, the missile fired late enough that
 +  // it comes out and the landing cuts its lag. The stick drifts her in between.
 +  SamusMissileLoop = 26,
++  // Dr. Mario: up-B on the ground gets the up-B cancel (the stick flicked back in its first frames).
++  DocUpBCancel = 27,
++  // Mario: B held through up-B: wall jump off the wall as the up-B falls, then up-B again, on and on.
++  MarioWallUpB = 28,
++  // Any fighter: in a dash, a smash attack backward (C-stick back, or A with the stick back) is a
++  // pivot forward smash that way (dash back one frame, stick at rest, forward smash).
++  PivotFsmash = 29,
++  // Samus: A held from jab 1: jab, crouch, jab, crouch (only her first jab, again and again). Was part
++  // of HoldJab; its own switch in her tab.
++  SamusHoldJab = 30,
++  // Jigglypuff: side-B in the air with B kept held: rising Pounds again and again the way the stick
++  // points (stick up as each Pound takes its angle).
++  PuffPoundLoop = 31,
++  // Mario, Dr. Mario, Luigi: B held in down-B (Tornado / Cyclone): B pressed every other frame, the
++  // mash that lifts it.
++  TornadoMash = 32,
++  // Donkey Kong: the Giant Punch charge stops (stored, L/R) at 9 swings; a 9 stored is thrown at once
++  // when he starts it again (before the 10th swing would make it a full one).
++  DkPunch9 = 33,
 +  kCount
 +};
 +
 +// Menu groups (F1 > Game > Vooby Mods): each its own sub menu.
-+enum Group : int { AllCharacters = 0, FoxFalco = 1, Options = 2, AiGroup = 3, FalconSamus = 4, kGroupCount, Hidden = -1 };
++// One tab per character (TSC 11-13: "please split up 'other characters'"); the sidebar's order is
++// the UI's kTabOrder, not this.
++enum Group : int { AllCharacters = 0, FoxFalco = 1, Options = 2, AiGroup = 3, Falcon = 4, Samus = 5, Zelda = 6,
++                   Jigglypuff = 7, Marios = 8, DonkeyKong = 9, kGroupCount, Hidden = -1 };
 +const char* group_name(int group);
 +
 +struct Info {
