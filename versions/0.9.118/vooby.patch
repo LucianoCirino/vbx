@@ -2820,10 +2820,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..ce16c65
+index 0000000..cbae98c
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,3155 @@
+@@ -0,0 +1,3163 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3107,7 +3107,8 @@ index 0000000..ce16c65
 +     "On: as Samus, fire a missile in the air and keep B held as she lands: the mod goes on with\n"
 +     "land-cancelled missiles while B stays held. On the ground she short hops, on a platform she drops\n"
 +     "through, and the missile goes out just late enough to come out before the landing cuts its lag.\n"
-+     "She keeps facing the way she started; the stick drifts her a little in the air. Let go of B to stop.\n"
++     "She keeps facing the way she started. Hold the stick to drift a little: the missiles then wait a few\n"
++     "frames so there is air time to drift in (no stick: the fastest timing). Let go of B to stop.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Samus},   // lab 11-13: FD and Stadium
 +    {"padmod_doc_upb_cancel", "Up-B cancel", "Dr. Mario: up-B on the ground is cancelled for you (the up-B cancel).",
 +     "On: as Dr. Mario, an up-B started on the ground gets the stick flicked back in its first frames\n"
@@ -4080,6 +4081,7 @@ index 0000000..ce16c65
 +// back on the ground, and on a platform she drops through to the ground.
 +constexpr int32_t kSamusAirMissile = 351, kSamusAirMissileSmash = 352;
 +constexpr int kMissileOut = 15;            // the motion frame the missile comes out on
++constexpr int kMissileDriftUp = 12;        // drifting up onto a platform: air frames before the missile
 +constexpr float kSamusGrav = 0.066f, kSamusFall = 1.4f;
 +// Frames until she reaches the ground (y 0) from y with speed vy (falling at most kSamusFall).
 +int frames_to_ground(float y, float vy) {
@@ -4151,7 +4153,13 @@ index 0000000..ce16c65
 +  // opponent (lab 11-13, FD: 1 hit early, 4 late).
 +  const bool under = st.sm_plat && st.px >= st.sm_plat_x0 - 8.0f && st.px <= st.sm_plat_x1 + 8.0f &&
 +                     st.sm_plat_y - st.py > 3.0f && st.sm_plat_y - st.py < 30.0f;
-+  if (st.sm_phase == 2 && (under || left <= kMissileOut + 3 + delay)) {
++  // Their stick pushed = they want to drift (TSC 11-13: "if i try to drift alter timing"): the air
++  // missile itself has no air control, so the fire waits. Going up onto the platform: from its 12th
++  // air frame (lab: fired up to near the top of the hop she still lands on it); coming down, or
++  // away from a platform: the late timing (just in time for the missile before the landing).
++  const bool drifting = std::abs((int)pad.stick_x) >= kStickDeadzone;
++  const bool fire_now = under && (!drifting || (vy > 0.0f && st.air_age >= kMissileDriftUp));
++  if (st.sm_phase == 2 && (fire_now || left <= kMissileOut + 3 + delay)) {
 +    o.sx = 0;              // at rest one frame: the full push next is a smash (the strong missile)
 +    st.sm_phase = 4;
 +  }
