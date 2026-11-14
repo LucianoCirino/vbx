@@ -1419,7 +1419,7 @@ index 0000000..2fcb4c4
 +};
 diff --git a/port/runtime/gx/vooby_ui.inl b/port/runtime/gx/vooby_ui.inl
 new file mode 100644
-index 0000000..ba8c19a
+index 0000000..3be991f
 --- /dev/null
 +++ b/port/runtime/gx/vooby_ui.inl
 @@ -0,0 +1,633 @@
@@ -2009,7 +2009,7 @@ index 0000000..ba8c19a
 +      pad_mods::GroundWavedash, pad_mods::SlideStretch, pad_mods::LedgeDash, pad_mods::CStickUpJump,
 +      pad_mods::RunJcGrab, pad_mods::ZAlwaysGrabs, pad_mods::ShieldUpB, pad_mods::AutoLCancel,
 +      pad_mods::FoxFalcoShine, pad_mods::Multishine, pad_mods::ShineWavedash, pad_mods::LedgeStall, pad_mods::ShieldShine, pad_mods::FoxLaserLoop, pad_mods::HoldLaser,
-+      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash,
++      pad_mods::UpTiltButton, pad_mods::RunJab, pad_mods::HoldJab, pad_mods::FalconGentleman, pad_mods::SamusSuperWavedash, pad_mods::SamusExtendedGrapple,
 +      pad_mods::ZeldaShieldNayru, pad_mods::JigglyRest, pad_mods::JumpWithY, pad_mods::HumanTiming};
 +  if (tab == kBlockTab) {   // matchmaking reads the list whatever the mods' switches say
 +    ImGui::EndDisabled();
@@ -2810,10 +2810,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..b659d34
+index 0000000..13fd2f5
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2710 @@
+@@ -0,0 +1,2749 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3086,6 +3086,12 @@ index 0000000..b659d34
 +     "the neutral-B zone. Let go of B to stop. Ground lasers need 'Ground B is shine' off; for Fox in\n"
 +     "the air the laser loop mod takes over when it is on.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", FoxFalco},
++    {"padmod_samus_grapple", "Hold Z: extended grapple", "Samus: hold Z as you grab and the grapple beam reaches about 3 times as far.",
++     "On: as Samus, keep Z held as the grab starts: the mod enters the Extended Grapple for you (D-pad\n"
++     "up, down, up, then Z, inside frames 8..39 of the grab), and from then on until she loses a stock\n"
++     "her grapple reaches about 3 times as far. The long beam grabs only at its tip: press Z or A when\n"
++     "the tip is over them. A tap of Z is the normal grab. (NTSC only, as in the game.)\n"
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Hidden},   // hidden: inputs go out but no longer beam seen yet,
 +};
 +
 +static_assert(sizeof kInfo / sizeof kInfo[0] == kCount, "one kInfo row per Mod, in enum order");
@@ -3200,6 +3206,7 @@ index 0000000..b659d34
 +  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
++  int sg_step = -1; bool sg_armed = false, sg_tap = false;   // Samus's extended grapple: input step, Z held at the grab's start
 +  int air_age = 1000;                   // frames since the fighter was last on the ground
 +  bool gwd_spot = false;                // one-button wavedash: this R is a spot dodge (stick down), theirs while held
 +  int rj_frame = -1, rj_a = 0;          // jab out of a run: frames since A (-1 none), A frames given
@@ -3882,6 +3889,32 @@ index 0000000..b659d34
 +  return true;
 +}
 +
++// ---- Samus: Z held into a grab = the Extended Grapple (SamusExtendedGrapple)
++// SmashWiki (Extended Grapple, NTSC): during the grab's frames 8..39, before the beam shows, D-pad
++// up, down, up, then Z or A: the beam goes about 3x as far until she loses a stock (it then grabs
++// only at its tip, on a Z/A press). With Z still held as the grab (Catch 212, CatchDash 214) starts,
++// from frame 8: up, -, down, -, up, Z let go, Z: one press each, the Z a fresh one.
++constexpr int32_t kSamusKind = 0x0D + 1;
++constexpr uint16_t kPadDUp = 0x0008, kPadDDownG = 0x0004;
++bool samus_grapple(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind) {
++  const int m = (f && kind == kSamusKind) ? f->motion_id : -1;
++  if (m != 212 && m != 214) { st.sg_step = -1; st.sg_armed = false; st.sg_tap = false; return false; }
++  if (st.sg_step < 0 && !st.sg_armed) {
++    if (!(pad.button & kPadZ)) { st.sg_armed = true; st.sg_tap = true; return false; }   // let go: a tap, the normal grab
++    if (f->anim_frame < 7.0f) return false;                                            // still held: wait
++    st.sg_armed = true; st.sg_tap = false;
++  }
++  if (st.sg_tap) return false;
++  if (st.sg_step < 0) { st.sg_step = 0; host::log("padmods: Samus extended grapple"); }
++  if (st.sg_step < 0) return false;
++  const int s = st.sg_step++;
++  if (s == 0 || s == 4) o.add |= kPadDUp;
++  else if (s == 2) o.add |= kPadDDownG;
++  if (s == 5) o.remove |= kPadZ;
++  else if (s == 6) o.add |= kPadZ;
++  return s <= 6;
++}
++
 +// ---- Samus: down-B held = super wavedash (SamusSuperWavedash)
 +// SmashWiki (Super wavedash): drop a bomb; as Samus lands, the opposite direction on frame 41, the
 +// direction wanted on frame 42, then the stick let go. Lab 11-10: the ground bomb is 355 (frames
@@ -3912,6 +3945,10 @@ index 0000000..b659d34
 +    return b;
 +  }
 +  if (!st.swd_go) return b;
++  // Frame 43 at rest (the let-go), then their stick again (TSC 11-13: "after super wavedash i cant
++  // hold a direction to do stuff like tilt": kept at rest to the bomb's end, the held stick came back
++  // as a sudden full push, read as a smash/dash).
++  if (f > 43) return b;
 +  o.set_stick = true; o.sy = 0;
 +  o.sx = f == 41 ? (int8_t)(-80 * st.swd_dir) : f == 42 ? (int8_t)(80 * st.swd_dir) : 0;
 +  if (f == 41) host::log("padmods: Samus super wavedash %s", st.swd_dir > 0 ? "right" : "left");
@@ -4475,7 +4512,7 @@ index 0000000..b659d34
 +//     Z, a fresh press: KneeBend's IASA takes the grab;
 +//   then Z is theirs while they hold it. No state is waited on, so it works at any delay.
 +// Returns true while it owns the press, so Z-always-grabs leaves it alone.
-+bool run_jc_grab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, bool jumping) {
++bool run_jc_grab(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, bool jumping, int32_t kind) {
 +  const bool z = (pad.button & kPadZ) != 0;
 +  if (st.rjc_frame >= 0) {
 +    const int f = st.rjc_frame++;
@@ -4485,11 +4522,12 @@ index 0000000..b659d34
 +    return true;
 +  }
 +  if (!z || st.z_was_down || jumping || !fighter || fighter->ground_or_air != 0) return false;
++  if (kind == 0x0D + 1) return false;   // Samus: her dash grab reaches furthest (TSC 11-13)
 +  const int32_t m = fighter->motion_id;
 +  if (m < 19 || m > kRunBrake) return false;   // TurnRun, Dash, Run, RunDirect, RunBrake
 +  host::log("padmods: Z while running: jump-cancelled grab (motion %d)", (int)m);
 +  st.rjc_frame = 0;
-+  return run_jc_grab(o, st, pad, fighter, jumping);
++  return run_jc_grab(o, st, pad, fighter, jumping, kind);
 +}
 +
 +// ---- B in shield: up-B out of shield (any fighter) or, for Fox/Falco, shine out of shield
@@ -5419,7 +5457,7 @@ index 0000000..b659d34
 +    if (enabled(FoxLaserLoop) && !ms && st.ms_frame < 0) fox_laser_loop(o, st, pad, fighter, kind, facing);
 +    else { st.lz_armed = false; st.lz_frame = -1; st.lz_jsb = -1; }
 +    if (enabled(HoldLaser) && !ms && !oos) hold_laser(o, st, pad, fighter, kind, facing); else { st.hl_on = false; st.hl_t = 0; }
-+    const bool rjc = enabled(RunJcGrab) && run_jc_grab(o, st, pad, fighter, jumping);
++    const bool rjc = enabled(RunJcGrab) && run_jc_grab(o, st, pad, fighter, jumping, kind);
 +    if (!enabled(RunJcGrab)) st.rjc_frame = -1;
 +    if (rjc) {
 +      st.z_since = -1;   // this Z is the run grab's
@@ -5435,6 +5473,7 @@ index 0000000..b659d34
 +    if (enabled(HoldJab) && !rj) hold_jab(o, st, pad, fighter, kind); else { st.hj_held = 0; st.hj_t = 0; }
 +    if (enabled(FalconGentleman)) falcon_gentleman(o, st, pad, fighter, kind, delay);
 +    else { st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false; }
++    if (enabled(SamusExtendedGrapple)) samus_grapple(o, st, pad, fighter, kind); else { st.sg_step = -1; st.sg_armed = false; }
 +    if (enabled(SamusSuperWavedash)) samus_swd(o, st, pad, fighter, kind, delay);
 +    else { st.swd_dir = 0; st.swd_go = st.swd_hide_b = false; }
 +    const bool stall = enabled(LedgeStall) && ledge_stall(o, st, pad, fighter, kind, delay);
@@ -5526,10 +5565,10 @@ index 0000000..b659d34
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..1004f52
+index 0000000..3277ae3
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,169 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -5635,6 +5674,8 @@ index 0000000..1004f52
 +  // Fox/Falco with B held: B pressed again every other frame, so the laser loops on the ground and in
 +  // the air, and a new laser starts whenever one ends (standing, walking, crouching, jumping, falling).
 +  HoldLaser = 24,
++  // Samus: Z held as a grab starts: the Extended Grapple input (D-pad up, down, up, Z in frames 8..39).
++  SamusExtendedGrapple = 25,
 +  kCount
 +};
 +
