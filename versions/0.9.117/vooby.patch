@@ -2810,10 +2810,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..13fd2f5
+index 0000000..751a737
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,2749 @@
+@@ -0,0 +1,2778 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -3219,6 +3219,7 @@ index 0000000..13fd2f5
 +  float px = 0, py = 0;                 // the fighter's position (the host's view)
 +  int ut_a = 0;                         // ...frames A has been sent with the stick up
 +  bool ut_was_down = false;             // the button last frame, as the player held it
++  int swd_hold = 0;                     // frames left keeping the still-held slide direction at rest
 +  bool swd_go = false, swd_hide_b = false;   // armed (B held at the landing); B kept from the game until let go
 +  int ms_frame = -1, ms_wait = -1, ms_cool = 0, ms_js = 3, ms_since = 1000;   // ms_since: frames since the last one   // multishine: frames since its jump; waiting for the Loop; settle time
 +  int oos_jump_wait = -1;       // their jump pressed in a shine out of shield's hop: frames held back (-1 none)
@@ -3922,6 +3923,7 @@ index 0000000..13fd2f5
 +// shot (342), so B is kept from the game until let go.
 +constexpr int32_t kKindSamus = 0x0D + 1;
 +constexpr int32_t kSamusBomb = 355, kSamusBombHop = 356;
++constexpr int kSwdHoldFrames = 13;   // the most frames a held direction is kept at rest after the slide starts
 +bool samus_swd(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* fighter, int32_t kind, int delay) {
 +  static const int test_off = std::getenv("MU_TEST_SWD_OFF") ? std::atoi(std::getenv("MU_TEST_SWD_OFF")) : 0;   // tests
 +  const bool b = (pad.button & kPadB) != 0;
@@ -3929,26 +3931,48 @@ index 0000000..13fd2f5
 +  if (std::getenv("MU_TEST_SWD_LOG") && fighter)
 +    host::log("swd: kind %d motion %d frame %.1f b %d sx %d dir %d go %d", (int)kind, (int)fighter->motion_id, fighter->anim_frame,
 +              (int)b, (int)pad.stick_x, st.swd_dir, (int)st.swd_go);
++  // After the slide starts, the direction they kept holding stays at rest (a held push cuts the
++  // slide short or turns into a dash) until they let go / turn, press a button, or the slide is
++  // over. A button pressed while holding gets the stick as a tilt: forward tilt, not a smash.
++  // (TSC 11-13: "while in the first part of down b ... be able to hold a direction")
++  auto hold_slide = [&]() -> bool {
++    if (st.swd_hold <= 0) return false;
++    --st.swd_hold;
++    const int x = pad.stick_x;
++    if (x * st.swd_dir < 40) { st.swd_hold = 0; return false; }   // let go or turned: theirs
++    const uint16_t btn = kPadA | kPadB | kPadZ | kPadX | kPadY | kPadL | kPadR;
++    if (pad.button & ~st.buttons_was_down & btn) {   // a fresh press (the down-B's B is still held)
++      st.swd_hold = 0;
++      o.set_stick = true; o.sx = (int8_t)(50 * st.swd_dir);
++      o.sy = (int8_t)std::max(-50, std::min(50, (int)pad.stick_y));
++      return true;
++    }
++    o.set_stick = true; o.sx = 0; o.sy = pad.stick_y > 40 || pad.stick_y < -40 ? pad.stick_y : 0;
++    return true;
++  };
 +  if (m != kSamusBomb && m != kSamusBombHop) {
-+    st.swd_dir = 0; st.swd_go = false;
++    const bool held = hold_slide();
++    st.swd_dir = held ? st.swd_dir : 0; st.swd_go = false;
++    if (held) { if (st.swd_hide_b && b) o.remove |= kPadB; else st.swd_hide_b = false; return true; }
 +    if (st.swd_hide_b && b) { o.remove |= kPadB; return true; }
 +    st.swd_hide_b = false;
 +    return false;
 +  }
 +  if (b) { o.remove |= kPadB; st.swd_hide_b = true; }
++  if (st.swd_hold > 0) return hold_slide() || b;
 +  if (pad.stick_x >= 40) st.swd_dir = 1; else if (pad.stick_x <= -40) st.swd_dir = -1;
 +  // the bomb frame the game is on when it reads this pad
 +  const int f = (int)(fighter->anim_frame + 0.5f) + 1 + delay + test_off;
-+  if (f < 41) {   // the hop: the stick kept at rest (a held direction drifts the ball off the landing)
++  if (f < 41) {   // the hop: their stick, so the ball drifts where they hold (TSC 11-13: "the mod makes
++                  // it so i cant move forward while i drop in ball form"); the inputs are only at the landing
 +    st.swd_go = b && st.swd_dir != 0;
-+    if (st.swd_go) { o.set_stick = true; o.sx = 0; o.sy = 0; }
 +    return b;
 +  }
 +  if (!st.swd_go) return b;
 +  // Frame 43 at rest (the let-go), then their stick again (TSC 11-13: "after super wavedash i cant
 +  // hold a direction to do stuff like tilt": kept at rest to the bomb's end, the held stick came back
 +  // as a sudden full push, read as a smash/dash).
-+  if (f > 43) return b;
++  if (f > 43) { st.swd_hold = kSwdHoldFrames; return hold_slide() || b; }
 +  o.set_stick = true; o.sy = 0;
 +  o.sx = f == 41 ? (int8_t)(-80 * st.swd_dir) : f == 42 ? (int8_t)(80 * st.swd_dir) : 0;
 +  if (f == 41) host::log("padmods: Samus super wavedash %s", st.swd_dir > 0 ? "right" : "left");
@@ -5390,13 +5414,18 @@ index 0000000..13fd2f5
 +    o = Out{};
 +    st.opp_ok = false;
 +    if (fighter) {   // the nearest live opponent (any slot, CPUs too; Teams: the other team)
-+      int me = view.port_slot[p];
-+      if (me < 0) for (int i = 0; i < 4; ++i) if (&view.port[i] == fighter) me = view.port[i].slot;
++      // Our own slot from the fighter itself: online it is the one local fighter wherever it is
++      // filed, not pad p's entry (TSC 11-13, Teams on adapter port 4: port_slot[3] named another
++      // player, so Puff found herself at (0, 0) and rested at once).
++      int me = -1;
++      for (int i = 0; i < 4; ++i)
++        if (&view.port[i] == fighter) me = view.port_slot[i] >= 0 ? view.port_slot[i] : view.port[i].slot;
 +      float best = 1e9f;
 +      for (int s = 0; s < 4; ++s) {
 +        if (s == me || !view.slot_live[s]) continue;
 +        if (me >= 0 && me < 4 && view.slot_team[s] >= 0 && view.slot_team[s] == view.slot_team[me]) continue;
 +        const float dx = view.slot_x[s] - st.px, dy = view.slot_y[s] - st.py, d = dx * dx + dy * dy;
++        if (d < 1e-6f) continue;   // right where we are: ourselves (or a position not known)
 +        if (d < best) { best = d; st.opp_dx = dx; st.opp_dy = dy; st.opp_ok = true; }
 +      }
 +    }
@@ -5475,7 +5504,7 @@ index 0000000..13fd2f5
 +    else { st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false; }
 +    if (enabled(SamusExtendedGrapple)) samus_grapple(o, st, pad, fighter, kind); else { st.sg_step = -1; st.sg_armed = false; }
 +    if (enabled(SamusSuperWavedash)) samus_swd(o, st, pad, fighter, kind, delay);
-+    else { st.swd_dir = 0; st.swd_go = st.swd_hide_b = false; }
++    else { st.swd_dir = 0; st.swd_go = st.swd_hide_b = false; st.swd_hold = 0; }
 +    const bool stall = enabled(LedgeStall) && ledge_stall(o, st, pad, fighter, kind, delay);
 +    if (!enabled(LedgeStall)) { st.us_frame = -1; st.us_stopped = false; }
 +    const bool ledge = !stall && enabled(LedgeDash) && ledge_dash(o, st, pad, fighter, kind, facing, delay);
@@ -5880,10 +5909,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..e36118d
+index 0000000..aa3c034
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1357 @@
+@@ -0,0 +1,1361 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -7222,6 +7251,10 @@ index 0000000..e36118d
 +    view.slot_team[1] = 0; view.slot_team[3] = 0;
 +    for (int f = 0; f < 4; ++f) CHECK(!(pad4({rb}).button & kB));
 +    view.slot_team[1] = view.slot_team[3] = -1;
++    // our own slot named wrong (TSC 11-13, online Teams): she is never her own opponent
++    view.slot_x[1] = 40; view.slot_live[3] = 1; view.slot_x[3] = 0; view.slot_y[3] = 0; view.port_slot[3] = 1;
++    for (int f = 0; f < 4; ++f) CHECK(!(pad4({rb}).button & kB));
++    view.slot_live[3] = 0; view.port_slot[3] = 3;
 +    // not Jigglypuff: the button is untouched
 +    fighter(3, kFox, kWait, 0); idle(30);
 +    CHECK(pad4({rb}).button & rb);
