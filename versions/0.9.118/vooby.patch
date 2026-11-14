@@ -2820,10 +2820,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..367e7d4
+index 0000000..ce16c65
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,3153 @@
+@@ -0,0 +1,3155 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -4135,7 +4135,9 @@ index 0000000..367e7d4
 +    st.sm_phase = 3;
 +    return true;
 +  }
-+  o.set_stick = true; o.sx = pad.stick_x; o.sy = 0;
++  // a slight drift only (TSC 11-13: "slight movement di correction"): half the stick (lab: full
++  // backward on FD drifted 15-30 a missile, off the stage)
++  o.set_stick = true; o.sx = (int8_t)(pad.stick_x / 2); o.sy = 0;
 +  if (m == kKneeBend) return true;
 +  // Fire as soon as she is off the ground (TSC 11-13: Stadium's fast double missiles). Lab 11-13
 +  // (Stadium, under a side platform): a short hop alone peaks at 22.75, short of the platform (25),
