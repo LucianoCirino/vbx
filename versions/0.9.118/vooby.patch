@@ -55,7 +55,7 @@ index 275de45..8930fb6 100644
  target_include_directories(port_offline_input_delay_test PRIVATE runtime/host runtime/ppc)
  target_compile_features(port_offline_input_delay_test PRIVATE cxx_std_17)
 diff --git a/port/app/source_host.cpp b/port/app/source_host.cpp
-index 61f5afc..5455760 100644
+index 61f5afc..ca1354b 100644
 --- a/port/app/source_host.cpp
 +++ b/port/app/source_host.cpp
 @@ -59,8 +59,10 @@
@@ -147,7 +147,7 @@ index 61f5afc..5455760 100644
  void ranked_harness_tick() {
    if (g_online_test_mode != 0 || !g_online_test_started) return;
    RankedHarness& h = g_ranked_harness;
-@@ -2284,6 +2311,68 @@ void ranked_harness_tick() {
+@@ -2284,6 +2311,72 @@ void ranked_harness_tick() {
    host::log("online test: ranked, back to the match scene for the next game (from major %d state %d)", scene[0], scene[1]);
  }
  
@@ -207,6 +207,10 @@ index 61f5afc..5455760 100644
 +    out->slot_live[s] = q.present && q.stocks > 0;
 +    std::memcpy(&out->slot_x[s], &q.pos_x, 4); std::memcpy(&out->slot_y[s], &q.pos_y, 4);
 +    out->slot_team[s] = ai_takeover::team_of(s);
++    // Hittable: the replay's hurtbox state (respawn invincibility, ledge, roll, spot and air dodge
++    // frames); with no replay recorded, only the dead and respawn-platform actions (0-13) are known.
++    const int hurt = ai_takeover::hurtbox_of(s);
++    out->slot_unhittable[s] = (q.present && q.action <= 13) || hurt > 0;
 +  }
 +}
 +
@@ -216,7 +220,7 @@ index 61f5afc..5455760 100644
  void h_pad_read(MuPadStatus out[4]) {
    if (g_online_test_mode == 0) ranked_harness_tick();
    host::PadState pads[4];
-@@ -2311,6 +2400,92 @@ void h_pad_read(MuPadStatus out[4]) {
+@@ -2311,6 +2404,92 @@ void h_pad_read(MuPadStatus out[4]) {
    current_fight_sample = {};
  #endif
    lcancel::apply(pads);   // auto L-cancel, upstream of the game exactly as in the recompiled build
@@ -309,7 +313,7 @@ index 61f5afc..5455760 100644
    slippi::native_practice::apply_pads(pads);   // Training after an online session, the requeue prompt
    bool offline_gameplay = false;
    if (gx::RenderOptions::live_offline_delay() && !g_replaying &&
-@@ -2399,10 +2574,19 @@ bool native_online_mode() {
+@@ -2399,10 +2578,19 @@ bool native_online_mode() {
    int32_t scene[2] = {0, 0};
    return g_game.practice(MU_PRACTICE_SCENE, scene, 2) == 0 && scene[0] == 8;
  }
@@ -329,7 +333,7 @@ index 61f5afc..5455760 100644
    auto it = g_paths.find(p);
    if (it != g_paths.end() && g_retail_view) {
      // The retail copy, or -1 for a file the retail game does not have. A pack costume that only
-@@ -3362,6 +3546,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
+@@ -3362,6 +3550,7 @@ int32_t h_replay_stock_steal(int32_t frame, int32_t port) {
  }
  
  void h_replay_event(uint8_t command, const uint8_t* payload, uint32_t size) {
@@ -337,7 +341,7 @@ index 61f5afc..5455760 100644
  #ifdef YOUGAME_AGENT_TEST_HOOK
    if (command == 0x36)
      g_agent_fight_match = !g_replaying && size >= 0x2F8 && (payload[0x1A3] == 0x08 || payload[0x2BD] != 0);
-@@ -4217,7 +4402,7 @@ int run(void (*shutdown)(int)) {
+@@ -4217,7 +4406,7 @@ int run(void (*shutdown)(int)) {
  #endif
    gx::set_native_owner_source(true);
    // The L-cancel helper reads the native game's fighters through the game, not guest memory.
@@ -397,10 +401,10 @@ index 7d23aeb..4bb4942 100644
    if (g_pointer_rested) visible = false;
    show_cursor(visible);
 diff --git a/port/runtime/abi/mu_lcancel_view.h b/port/runtime/abi/mu_lcancel_view.h
-index 8b1b559..16fda9f 100644
+index 8b1b559..92c00d2 100644
 --- a/port/runtime/abi/mu_lcancel_view.h
 +++ b/port/runtime/abi/mu_lcancel_view.h
-@@ -30,6 +30,23 @@ typedef struct MuLcancelView {
+@@ -30,6 +30,26 @@ typedef struct MuLcancelView {
      float trigger_deadzone;                                /* ftCommonData analog_shoulder_deadzone */
      MuLcancelS32 lcancel_window;                           /* ftCommonData xE4 */
      MuLcancelFighter port[4];
@@ -421,11 +425,14 @@ index 8b1b559..16fda9f 100644
 +    float slot_x[4], slot_y[4];
 +    MuLcancelS32 slot_team[4];
 +    MuLcancelS32 port_slot[4];
++    /* Per player slot, filled by the host for auto rest: 1 when it cannot be hit (the replay's
++     * hurtbox state invulnerable or intangible, or a dead / respawn action), else 0. */
++    MuLcancelS32 slot_unhittable[4];
  } MuLcancelView;
  
  #endif
 diff --git a/port/runtime/gx/pc_settings.cpp b/port/runtime/gx/pc_settings.cpp
-index 6dcb9c0..91d41fb 100644
+index 6dcb9c0..a64ce8b 100644
 --- a/port/runtime/gx/pc_settings.cpp
 +++ b/port/runtime/gx/pc_settings.cpp
 @@ -52,6 +52,11 @@
@@ -462,7 +469,7 @@ index 6dcb9c0..91d41fb 100644
        if (!std::isfinite(p.tag_x) || !std::isfinite(p.tag_y) || p.tag_y <= 0.0f) continue;
        const char* label = mine ? "YOU" : "\xE2\x99\xA5";
        const float w = practice_menu::text_width(px, label);
-@@ -455,6 +468,74 @@ static void draw_community_code_overlays() {
+@@ -455,6 +468,147 @@ static void draw_community_code_overlays() {
    draw->PopClipRect();
  }
  
@@ -534,10 +541,83 @@ index 6dcb9c0..91d41fb 100644
 +  draw->PopClipRect();
 +}
 +
++// Vooby Mods' auto rest armed (Jigglypuff, a tap of its button): a soft pulsing glow around her and
++// her eyes lit (TSC 11-14), so the player sees it is on. Placed from the game's nametag point (above
++// the head) with the camera's scale worked out from two fighters' nametags and world x (pad_mods'
++// view), so it keeps to her as the camera zooms. Rings only, so she stays visible through it.
++static float env_or(const char* name, float v) { const char* e = std::getenv(name); return e ? (float)std::atof(e) : v; }
++static void draw_rest_aura() {
++  if (!g_hud_match) return;
++  OverlayBounds bounds = overlay_bounds();
++  if (const char* tb = std::getenv("MU_TEST_AURA_BOUNDS"))   // tests: the captured frame's game area (the hidden window's overlay differs)
++    std::sscanf(tb, "%f,%f,%f,%f", &bounds.left, &bounds.top, &bounds.right, &bounds.bottom);
++  const float width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
++  ImDrawList* draw = ImGui::GetForegroundDrawList();
++  const float t = (float)ImGui::GetTime();
++  const float pulse = 0.5f + 0.5f * std::sin(t * 3.0f);
++  // Measured in the lab (11-14, Training on Final Destination, true 16:9), world units from the
++  // nametag point, x toward her facing: her middle 8.4 below and 0.8 ahead, her eyes at 0.35 and 4.3
++  // ahead on her middle's height, her body about 4.6 across.
++  static const float kDrop = env_or("MU_TEST_AURA_DROP", 8.4f), kMidX = env_or("MU_TEST_AURA_MX", 0.8f);
++  static const float kRadius = env_or("MU_TEST_AURA_R", 6.0f);
++  static const float kEyeX = env_or("MU_TEST_EYE_X", 0.35f), kEyeX2 = env_or("MU_TEST_EYE_X2", 4.3f), kEyeY = env_or("MU_TEST_EYE_Y", 0.0f);
++  static float scale = env_or("MU_TEST_AURA_S", 2.8f);   // 640-wide screen units per world unit (lab: 2.81 there), until two fighters are seen
++  auto x640 = [](float tag_x) { return true_widescreen_active() ? 320.0f + (tag_x - 320.0f) * true_widescreen_factor() : tag_x; };
++  auto tag_ok = [](const HudPlayerSnapshot& p) { return p.present && std::isfinite(p.tag_x) && std::isfinite(p.tag_y) && p.tag_y > 0.0f; };
++  bool pushed = false;
++  for (int port = 0; port < 4; ++port) {
++    pad_mods::RestAuraWorld w;
++    if (!pad_mods::rest_aura_world(port, w) || w.self_slot < 0 || w.self_slot > 3) continue;
++    const HudPlayerSnapshot& me = g_hud_players[w.self_slot];
++    if (!tag_ok(me)) continue;
++    for (int s = 0; s < 4; ++s) {   // the camera's scale: two nametags against the two fighters' world x
++      if (s == w.self_slot || !w.live[s] || !tag_ok(g_hud_players[s])) continue;
++      const float dw = w.x[s] - w.x[w.self_slot];
++      if (std::fabs(dw) < 8.0f) continue;
++      const float k = (x640(g_hud_players[s].tag_x) - x640(me.tag_x)) / dw;
++      if (k > 0.2f && k < 40.0f) scale += (k - scale) * 0.2f;
++      break;
++    }
++    if (!pushed) { draw->PushClipRect(ImVec2(bounds.left, bounds.top), ImVec2(bounds.right, bounds.bottom), true); pushed = true; }
++    const float u = scale * width / 640.0f;   // screen pixels per world unit, both ways (square pixels)
++    const float f = w.facing < 0.0f ? -1.0f : 1.0f;
++    const ImVec2 tag(bounds.left + x640(me.tag_x) * width / 640.0f, bounds.top + me.tag_y * height / 480.0f);
++    const ImVec2 c(tag.x + f * kMidX * u, tag.y + kDrop * u);
++    if (std::getenv("MU_TEST_AURA_LOG") && (ImGui::GetFrameCount() % 30) == 0)
++      host::log("aura: slot %d tag %.1f,%.1f world %.1f,%.1f facing %.0f scale %.2f centre %.0f,%.0f px", w.self_slot, me.tag_x, me.tag_y,
++                w.x[w.self_slot], w.y[w.self_slot], w.facing, scale, c.x, c.y);
++    const float r = (kRadius + 0.4f * pulse) * u;
++    draw->AddCircleFilled(c, r, IM_COL32(170, 140, 255, (int)(35 + 25 * pulse)), 48);
++    for (int i = 0; i < 3; ++i) {   // rings fading outward
++      const float ri = r + i * 0.7f * u;
++      draw->AddCircle(c, ri, IM_COL32(205, 175, 255, (int)((210 - 60 * i) * (0.6f + 0.4f * pulse))), 48, std::max(1.0f, (0.5f - 0.12f * i) * u));
++    }
++    // her eyes: a white-hot core in a violet glow on each
++    for (float ex : {kEyeX, kEyeX2}) {
++      const ImVec2 e(tag.x + f * ex * u, c.y - kEyeY * u);
++      const float er = 0.6f * u;
++      draw->AddCircleFilled(e, er * (2.6f + 0.8f * pulse), IM_COL32(150, 110, 255, (int)(70 + 50 * pulse)), 24);
++      draw->AddCircleFilled(e, er * (1.6f + 0.3f * pulse), IM_COL32(195, 165, 255, (int)(170 + 60 * pulse)), 20);
++      draw->AddCircleFilled(e, er * 1.0f, IM_COL32(250, 248, 255, 250), 16);
++    }
++    for (int k = 0; k < 3; ++k) {   // small "z" sparks drifting up, the sleep sign
++      const float ph = std::fmod(t * 0.7f + k / 3.0f, 1.0f);
++      const float zx = c.x + f * (r * 0.55f + k * 0.4f * u), zy = c.y - r * 0.6f - ph * 3.5f * u;
++      const float zs = (0.8f + 0.6f * ph) * u;
++      const ImU32 zc = IM_COL32(230, 215, 255, (int)(220 * (1.0f - ph)));
++      const float th = std::max(1.0f, 0.28f * u);
++      draw->AddLine(ImVec2(zx, zy), ImVec2(zx + zs, zy), zc, th);
++      draw->AddLine(ImVec2(zx + zs, zy), ImVec2(zx, zy + zs), zc, th);
++      draw->AddLine(ImVec2(zx, zy + zs), ImVec2(zx + zs, zy + zs), zc, th);
++    }
++  }
++  if (pushed) draw->PopClipRect();
++}
++
  static void draw_player_nicknames() {
    if (!g_hud_match) return;
    const OverlayBounds bounds = overlay_bounds();
-@@ -749,7 +830,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
+@@ -749,7 +903,7 @@ static std::string active_pad_buttons_label(uint16_t button) {
  // while the settings panel is open, which is when the overlay may be dragged and resized.
  static void draw_input_overlay(int port, int row, bool lone, bool editable, bool borderless, bool values, int knob) {
    host::PadState pads[4]{};
@@ -546,7 +626,7 @@ index 6dcb9c0..91d41fb 100644
    int slot = port < 0 || port > 3 ? 0 : port;
    // An adapter socket the player is not using reports nothing, and the overlay then drew an empty
    // controller with no hint why. With a single port selected, show the first one that has a device
-@@ -2388,6 +2469,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
+@@ -2388,6 +2542,21 @@ void load_pc_settings(RenderOptions& options, int& volume) {
        else if (key == "lcancel_flash_mode") saved_lcancel_flash = std::clamp(std::stoi(value), 0, 6);
        else if (key == "lcancel_success_flash") saved_lcancel_success = std::clamp(std::stoi(value), 0, 2);
        else if (key == "autolcancel") lcancel::set_automatic(value == "1");
@@ -568,7 +648,7 @@ index 6dcb9c0..91d41fb 100644
        else if (key == "palstockicons") gecko::option_pal_stock_icons = value == "1";
        else if (key == "noscreenshake") gecko::option_no_screen_shake = value == "1";
        else if (key == "screenshake") gecko::option_screen_shake_percent = std::clamp(std::stoi(value), 0, 200);
-@@ -2791,6 +2887,8 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
+@@ -2791,6 +2960,8 @@ static void draw_settings_icon(int index, ImVec2 p, ImU32 color) {
  
  #include "ui_sources/gd_melee/text.inl"
  #include "pc_settings_visuals.inl"
@@ -577,7 +657,7 @@ index 6dcb9c0..91d41fb 100644
  
  // A change that applies at the next start (a mod look, an audio driver, a graphics backend): a button
  // that saves the settings and restarts the game, instead of the player closing and reopening it. The
-@@ -4459,7 +4557,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
+@@ -4459,7 +4630,24 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
         << "\nlcancel_flash_mode " << mu_lcancel_flash_mode(options.te_options2, lcancel::flash_mode())
         << "\nlcancel_success_flash " << mu_lcancel_success_color(options.te_options2)
         << "\nlcancelindicator " << (lcancel::indicator_enabled() ? 1 : 0)
@@ -603,7 +683,7 @@ index 6dcb9c0..91d41fb 100644
         << "\npalstockicons " << (gecko::option_pal_stock_icons ? 1 : 0)
         << "\nnoscreenshake " << (gecko::option_no_screen_shake ? 1 : 0)
         << "\nscreenshake " << gecko::option_screen_shake_percent
-@@ -5111,6 +5226,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5111,6 +5299,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      else if (const char* tab = host::test_env::getenv("MELEE_TEST_SETTINGS_TAB"))
        state.active_tab = std::clamp(std::atoi(tab), 0, 7);
      if (test_menu_style() >= 0) options.overlay_style = test_menu_style();
@@ -612,7 +692,7 @@ index 6dcb9c0..91d41fb 100644
    }
    const auto reset_settings_home = [&state](const char* why) {
      if (g_ui_diag) host::log("ui diag: settings reset to home (%s), tab %d", why, state.active_tab);
-@@ -5128,6 +5245,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -5128,6 +5318,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
      state.practice_open = false;
      reset_settings_home("guest Options row");
    }
@@ -623,7 +703,7 @@ index 6dcb9c0..91d41fb 100644
    if (host::window_take_settings_toggle()) {
      if (state.legacy_presentation) {
        options.overlay_style = state.legacy_saved_appearance;
-@@ -9390,7 +9511,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9390,7 +9584,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        ImGui::EndDisabled();
        if (ranked) settings_hint(lcancel::policy::ranked_hint);
        if (host::gameplay::vanilla_only()) settings_hint("Disabled for this vanilla-only session.");
@@ -633,7 +713,7 @@ index 6dcb9c0..91d41fb 100644
  #ifdef MELEE_NO_SLIPPI   // this build's matches are all the one kind, where it works
        settings_hint("(NOTE: Works offline and in online matches)");
        if (automatic) {
-@@ -9409,6 +9531,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -9409,6 +9604,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
        }
      }
  
@@ -650,12 +730,12 @@ index 6dcb9c0..91d41fb 100644
      // ---- HUD ----
      // A port code compiled into the game (recomp/gecko.py PORT_CODES): the stock row drawn at PAL's
      // size and height. Display only, read when the HUD is built, so it applies from the next match.
-@@ -10971,7 +11103,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
+@@ -10971,7 +11176,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
    if (!state.fill_window && !state.open && !state.menu_open && options.show_player_nicknames)
      draw_player_nicknames();
    if (!state.fill_window && !state.open && !state.menu_open) draw_combo_counter();
 -  if (!state.fill_window && !state.open && !state.menu_open) draw_community_code_overlays();
-+  if (!state.fill_window && !state.open && !state.menu_open) { draw_community_code_overlays(); if (!g_vooby_over_game) draw_ai_takeover_labels(); }
++  if (!state.fill_window && !state.open && !state.menu_open) { draw_community_code_overlays(); if (!g_vooby_over_game) { draw_rest_aura(); draw_ai_takeover_labels(); } }
 +  if (!state.fill_window && !state.open && !state.menu_open && g_vooby_over_game && vooby_ui::draw(&g_vooby_over_game, true))
 +    state.dirty = true;   // F12's Vooby Mods window: saved like the panel's changes
    if (!state.fill_window && !state.open && !state.menu_open && !g_hud_match && yougame::stdio_bridge())
@@ -2186,10 +2266,10 @@ index 06c151b..d9fd254 100644
  // True while the game is polling the online menus (mode select, the online character select screen,
 diff --git a/port/runtime/host/ai_takeover.cpp b/port/runtime/host/ai_takeover.cpp
 new file mode 100644
-index 0000000..8814645
+index 0000000..2fb7795
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.cpp
-@@ -0,0 +1,423 @@
+@@ -0,0 +1,444 @@
 +// Vooby Mods' AI takeover: see ai_takeover.h.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ai_takeover.h"
@@ -2328,6 +2408,13 @@ index 0000000..8814645
 +int team_of(int slot) {
 +  std::lock_guard<std::mutex> lock(g_mu);
 +  return team_locked(slot);
++}
++
++int hurtbox_of(int slot) {
++  std::lock_guard<std::mutex> lock(g_mu);
++  if (slot < 0 || slot > 3 || g_from_snapshot || !g_post[slot].have) return -1;
++  if (host::retrace_count() - g_post_retrace >= 4) return -1;   // the post-frames stopped: stale
++  return g_post[slot].hurtbox;
 +}
 +
 +void note_event(uint8_t command, const uint8_t* p, uint32_t size) {
@@ -2569,6 +2656,20 @@ index 0000000..8814645
 +      g_applied[port] = act;
 +      to_pad(act.lx, act.ly, act.cx, act.cy, act.l, act.r, act.buttons, out);
 +      out.err = (int8_t)err;
++      // A network started mid-match (the takeover switched on) answers its first frames with a C-stick
++      // flick: a smash attack, every time (lab 11-14, Cody's Fox in Training: C-stick down-left on its
++      // first answer after the 18 still frames, then down; TSC 11-14: "the ai always starts with a
++      // random smash attack"). The C-stick stays centred for its first 45 frames.
++      {
++        static uint32_t last_call[4] = {}, started[4] = {};
++        const uint32_t now = host::retrace_count();
++        if (now - last_call[port] > 3 || obs.reset) started[port] = now;
++        last_call[port] = now;
++        if (now - started[port] < 45) { out.sub_x = 0; out.sub_y = 0; }
++      }
++      if (std::getenv("MU_TEST_AI_PADLOG"))   // tests: the pro AI's controller, frame by frame
++        host::log("ai pad: frame %d act %d stick %d,%d c %d,%d buttons %04x", (int)self.frame, (int)self.motion, out.stick_x, out.stick_y,
++                  out.sub_x, out.sub_y, out.button);
 +      return true;
 +    }
 +    // no network answer: the practice CPU below plays
@@ -2615,10 +2716,10 @@ index 0000000..8814645
 +}
 diff --git a/port/runtime/host/ai_takeover.h b/port/runtime/host/ai_takeover.h
 new file mode 100644
-index 0000000..23d98fd
+index 0000000..7e8d4a6
 --- /dev/null
 +++ b/port/runtime/host/ai_takeover.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,55 @@
 +// Vooby Mods' AI takeover (pad_mods.h AiTakeover): an AI plays a player's fighter by writing that
 +// controller's pad, the same way every other Vooby Mod adds presses, so the game library is the
 +// release's own and nothing inside the match changes (a library built here would desync online).
@@ -2666,6 +2767,9 @@ index 0000000..23d98fd
 +// used when no replay is recorded (the replay's Game Start is the other source).
 +void note_hud_team(int slot, int team);
 +int port_of_slot(int slot);
++// The replay's hurtbox state of a player slot after the last frame: 0 vulnerable, 1 invulnerable,
++// 2 intangible; -1 not known (no replay recorded here, or none for a few pad reads).
++int hurtbox_of(int slot);
 +// The controller an AI holds this frame for the fighter on controller `port`. False: nothing to
 +// play (no match, no fighter on that port yet); the player's own pad stays.
 +bool drive(int port, host::PadState& out);
@@ -2820,10 +2924,10 @@ index 39c947a..eb3c4dd 100644
  
 diff --git a/port/runtime/host/pad_mods.cpp b/port/runtime/host/pad_mods.cpp
 new file mode 100644
-index 0000000..cbae98c
+index 0000000..b55c592
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.cpp
-@@ -0,0 +1,3163 @@
+@@ -0,0 +1,3208 @@
 +// Vooby Mods (training input mods). See pad_mods.h.
 +//
 +// WHO IT APPLIES TO
@@ -2855,6 +2959,7 @@ index 0000000..cbae98c
 +
 +#include <algorithm>
 +#include <atomic>
++#include <mutex>
 +#include <cstdlib>
 +#include <cmath>
 +#include <cstring>
@@ -3056,7 +3161,7 @@ index 0000000..cbae98c
 +     "rapid jab. The game counts every A press and release in a jab; the mod holds A for you and puts\n"
 +     "the next press inside the hit's freeze (hitlag), where the game does not count it. Slow presses\n"
 +     "work on hit. On a whiff the third jab only comes from mashing (two slow whiffed jabs stop there).\n"
-+     "Offline (no input delay). Offline, Direct and Teams; off in Ranked, Unranked and Party.", Falcon},   // not working yet (lab 11-10)
++     "Offline (no input delay). Offline, Direct and Teams; off in Ranked, Unranked and Party.", Hidden},   // removed (TSC 11-14: "bad")
 +    {"padmod_samus_swd", "Hold down-B: super wavedash", "Samus: down-B with B held slides far in the direction you hold.",
 +     "On: as Samus on the ground, press down-B and keep B held, then hold left or right: as the\n"
 +     "bomb's hop lands the mod taps the stick away and back on the exact frames and lets it rest,\n"
@@ -3067,7 +3172,7 @@ index 0000000..cbae98c
 +     "(not far enough for an up-smash or a jump). Out of a dash or a run the mod crouches first,\n"
 +     "since an up-tilt only comes out of standing, walking or crouching; during an attack or a\n"
 +     "landing it waits for the first frame one works. In the air the button is a jump as before.\n"
-+     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
++     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Hidden},   // removed (TSC 11-14: "bad")
 +    {"padmod_zelda_shield_nayru", "Nayru's Love out of shield", "Zelda: B while shielding does Nayru's Love on the first frame off the ground.",
 +     "On: as Zelda, pressing B while shielding jumps out of the shield and does Nayru's Love (B with\n"
 +     "the stick at rest) on the first frame off the ground, like the shine out of shield. B in shield\n"
@@ -3084,11 +3189,12 @@ index 0000000..cbae98c
 +     "for down tilts (Ness's repeated down tilt). A quick tap is one jab as before. Any fighter but\n"
 +     "Captain Falcon (his would always turn into the rapid jab); Samus has her own in her tab.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", AllCharacters},
-+    {"padmod_jiggly_rest", "Auto rest", "Jigglypuff: hold the button you do not jump with and she rests the moment an opponent is in range.",
-+     "On: as Jigglypuff, hold the X/Y button you do not jump with (Options: I jump with Y). While it\n"
-+     "is held, the moment the nearest opponent is close enough for Rest to hit, the mod puts in down-B\n"
-+     "(again every other frame until she can act). Let go and the button does nothing. Range measured\n"
-+     "in the game (Rest's own hitbox, with a margin); Teams: only the other team counts.\n"
++    {"padmod_jiggly_rest", "Auto rest", "Jigglypuff: tap the button you do not jump with to arm it (a glow around her) and she rests the moment an opponent can be hit.",
++     "On: as Jigglypuff, tap the X/Y button you do not jump with (Options: I jump with Y) to arm it,\n"
++     "tap again to turn it off; armed, a glow pulses around her. Armed, the moment the nearest opponent\n"
++     "who can be hit is close enough for Rest, the mod puts in down-B (again every other frame until\n"
++     "she can act). Not on someone invincible or intangible (respawn, ledge, roll and dodge frames).\n"
++     "Range measured in the game (Rest's own hitbox, with a margin); Teams: only the other team counts.\n"
 +     "Offline, Direct and Teams; off in Ranked, Unranked and Party.", Jigglypuff},
 +    {"padmod_hold_laser", "Hold B: lasers", "Fox and Falco: keep B held and the lasers keep firing, standing and in the air.",
 +     "On: as Fox or Falco, after B starts a laser, keep holding it: the mod presses B again every other\n"
@@ -3253,6 +3359,7 @@ index 0000000..cbae98c
 +  int gj_held = 0; bool gj_rel = false;            // frames A held (theirs); standing with A held: let go, then press
 +  int swd_dir = 0;                      // Samus's super wavedash: the direction held (-1, 0 none, 1)
 +  int hl_t = 0; bool hl_on = false;      // hold-B lasers: pulse clock, a laser seen since B went down
++  bool jr_armed = false, jr_was = false;   // auto rest: armed by a tap of its button (TSC 11-14: a toggle), the button last frame
 +  int jr_t = 0, jr_close = 0;           // auto rest: B pulse clock, close-in frames
 +  bool opp_ok = false; float opp_dx = 0, opp_dy = 0;   // the nearest opponent from this fighter (host view)
 +  int sg_step = -1; bool sg_active = false;   // Samus's extended grapple: in a grab; set up this stock
@@ -3324,8 +3431,10 @@ index 0000000..cbae98c
 +PortState g_ports[4];
 +uint32_t g_last_retrace = 0xFFFFFFFFu;
 +
++std::atomic<bool> g_rest_armed[4] = {};   // Jigglypuff's auto rest armed, per controller (the aura)
 +void reset() {
 +  for (auto& p : g_ports) p = PortState{};
++  for (auto& r : g_rest_armed) r.store(false);
 +  g_last_retrace = 0xFFFFFFFFu;
 +}
 +
@@ -4259,40 +4368,44 @@ index 0000000..cbae98c
 +}
 +
 +// ---- Jigglypuff: side-B held in the air = rising Pounds on and on (PuffPoundLoop)
-+// ftPr_SpecialAirS_Phys: on the Pound's script frame (cmd_vars[0]) its speed is set at an angle from
-+// the stick's y then (calcAngleRadians, up = rising). Up before the Pound starts would be up-B
-+// (Sing), so the stick goes up only once the Pound shows. Pound leaves her free (no helpless), so
-+// when it ends the next one goes in. Its motion id is learned from their own first side-B.
-+bool puff_pound_loop(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind) {
++// ftPr_SpecialAirS_Phys: on one script frame of the Pound (cmd_vars[0]) its speed is set at an angle
++// from the stick's y then (up = rising). Lab 11-14 (Final Destination, no delay, the stick up on a
++// single frame each run): only the pad read that sees the Pound's animation frame 11 rises (+6.4);
++// up on any other frame does nothing. So the stick is theirs for the whole move except that one
++// frame (shifted by the delay), when only y goes up (x stays theirs: the angle reads y alone). When
++// the Pound ends (she is free), one frame of side + B starts the next; between tries the stick is
++// theirs (TSC 11-14: "ur like eating my control stick input"). The motion id is learned from their
++// own first side-B.
++constexpr int kPoundAngleFrame = 11;   // the Pound's animation frame seen on the read whose y sets the angle
++bool puff_pound_loop(Out& o, PortState& st, const host::PadState& pad, const MuLcancelFighter* f, int32_t kind, int delay) {
 +  const bool b = (pad.button & kPadB) != 0, fresh = b && !(st.buttons_was_down & kPadB);
 +  const int m = (f && kind == kKindPuff && f->ground_or_air != 0) ? f->motion_id : -1;
 +  const int x = pad.stick_x;
 +  if (!b || m < 0) { st.pp_on = false; return false; }
++  if (std::abs(x) >= 64) st.pp_dir = x > 0 ? 1 : -1;
 +  if (!st.pp_on) {   // their own side-B in the air is the first Pound
 +    if (!fresh || std::abs(x) < 64) return false;
-+    st.pp_on = true; st.pp_motion = -1; st.pp_pre = m; st.pp_t = 0; st.pp_fire = 0; st.pp_dir = x > 0 ? 1 : -1;
++    st.pp_on = true; st.pp_motion = -1; st.pp_pre = m; st.pp_t = 0; st.pp_fire = 0;
 +    host::log("padmods: Jigglypuff pound loop");
 +    return false;
 +  }
-+  if (std::abs(x) >= 64) st.pp_dir = x > 0 ? 1 : -1;
 +  ++st.pp_t;
-+  o.remove |= kPadB;
++  o.remove |= kPadB;   // B stays held for the loop: only the mod's own presses go in
 +  if (st.pp_motion < 0) {   // the motion their press started: the Pound
 +    if (m != st.pp_pre) st.pp_motion = m;
-+    else if (st.pp_t > 8) { st.pp_on = false; return true; }   // no Pound came: stop
++    else if (st.pp_t > 8 + delay) { st.pp_on = false; return true; }   // no Pound came: stop
 +  }
-+  o.set_stick = true;
-+  if (m == st.pp_motion) { o.sx = 0; o.sy = 80; st.pp_fire = 0; return true; }   // pounding: up = rising
-+  static const int early = std::getenv("MU_TEST_PP_EARLY") ? std::atoi(std::getenv("MU_TEST_PP_EARLY")) : 1;   // tests
-+  if (st.pp_motion < 0) {   // their press went in last frame: up now (the angle may be read at once)
-+    if (early) { o.sx = 0; o.sy = 80; } else { o.sx = (int8_t)(80 * st.pp_dir); o.sy = 0; }
++  if (st.pp_motion >= 0 && m == st.pp_motion) {   // pounding: up on the one frame the angle is read
++    st.pp_fire = 0;
++    const int fr = (int)(f->anim_frame + 0.5f);
++    const int at = kPoundAngleFrame - delay;
++    if (fr >= at - 1 && fr <= at) { o.set_stick = true; o.sx = pad.stick_x; o.sy = 80; }   // a frame early too: the view's rounding
 +    return true;
 +  }
-+  // out of it: the next side-B (a fresh B with the stick full to the side)
-+  o.sx = (int8_t)(80 * st.pp_dir); o.sy = 0;
-+  if (early && (st.pp_fire & 1) == 0 && st.pp_fire > 0) { o.sx = 0; o.sy = 80; }   // the frame after a press: up
-+  if (st.pp_fire++ & 1) o.add |= kPadB;
-+  if (st.pp_fire > 12) { st.pp_on = false; }   // never took it: stop
++  if (st.pp_motion < 0) return true;   // waiting for the Pound to show
++  // out of it: the next side-B, one frame of side + B, again every other frame until it takes
++  if ((st.pp_fire++ & 1) == 0) { o.set_stick = true; o.sx = (int8_t)(80 * st.pp_dir); o.sy = 0; o.add |= kPadB; }
++  if (st.pp_fire > 12 + 2 * delay) st.pp_on = false;   // never took it: stop
 +  return true;
 +}
 +
@@ -5648,7 +5761,9 @@ index 0000000..cbae98c
 +  lcancel::set_mod_automatic(on && g_on[AutoLCancel].load(std::memory_order_relaxed));
 +}
 +bool all_enabled() { return g_all.load(std::memory_order_relaxed); }
-+bool enabled(int mod) { return mod >= 0 && mod < kCount && g_on[mod].load(std::memory_order_relaxed); }
++// Removed mods (TSC 11-14): kept in the list so saved settings keep their places, never on.
++bool retired(int mod) { return mod == FalconGentleman || mod == UpTiltButton; }
++bool enabled(int mod) { return mod >= 0 && mod < kCount && !retired(mod) && g_on[mod].load(std::memory_order_relaxed); }
 +bool any_enabled() {   // a move mod (human timing alone changes nothing)
 +  for (int m = 0; m < kCount; ++m)
 +    if (info(m).group != Options && m != AutoLCancel && m != AiTakeover && enabled(m)) return true;
@@ -5678,6 +5793,15 @@ index 0000000..cbae98c
 +}
 +int ai_choice(int kind) { return kind >= 0 && kind < kAiKinds ? g_ai_choice[kind].load() : kAiDefault; }
 +void set_ai_choice(int kind, int choice) { if (kind >= 0 && kind < kAiKinds) g_ai_choice[kind].store(choice); }
++std::mutex g_aura_mu;
++RestAuraWorld g_aura[4] = {};
++bool rest_aura_world(int port, RestAuraWorld& out) {
++  if (!rest_armed(port)) return false;
++  std::lock_guard<std::mutex> lock(g_aura_mu);
++  out = g_aura[port];
++  return out.self_slot >= 0;
++}
++bool rest_armed(int port) { return port >= 0 && port < 4 && g_rest_armed[port].load(std::memory_order_relaxed); }
 +bool ai_active(int port) { return port >= 0 && port < 4 && g_ai_on[port].load(std::memory_order_relaxed); }
 +std::atomic<AiDriver> g_ai_driver{nullptr};
 +void set_ai_driver(AiDriver driver) { g_ai_driver.store(driver); }
@@ -5809,13 +5933,38 @@ index 0000000..cbae98c
 +        if (me >= 0 && me < 4 && view.slot_team[s] >= 0 && view.slot_team[s] == view.slot_team[me]) continue;
 +        const float dx = view.slot_x[s] - st.px, dy = view.slot_y[s] - st.py, d = dx * dx + dy * dy;
 +        if (d < 1e-6f) continue;   // right where we are: ourselves (or a position not known)
++        // Can't be hit now (invincible after respawn, ledge, roll, dodge): not a Rest target this
++        // frame; it rests on the first frame they can be (TSC 11-14).
++        if (view.slot_unhittable[s]) continue;
 +        if (d < best) { best = d; st.opp_dx = dx; st.opp_dy = dy; st.opp_ok = true; }
 +      }
 +    }
-+    const bool rest_held = enabled(JigglyRest) && kind == kKindPuff && (pad.button & jump_bit(JigglyRest));
++    // Auto rest is a toggle (TSC 11-14): a tap of its button arms it, the next tap disarms it; armed,
++    // it rests whenever an opponent who can be hit is in range. The aura (pc_settings) shows it armed.
++    const bool puff_rest = enabled(JigglyRest) && kind == kKindPuff;
++    const bool rest_down = puff_rest && (pad.button & jump_bit(JigglyRest));
++    if (rest_down && !st.jr_was) {
++      st.jr_armed = !st.jr_armed;
++      host::log("padmods: auto rest %s", st.jr_armed ? "armed" : "off");
++    }
++    st.jr_was = rest_down;
++    if (!puff_rest || !fighter) st.jr_armed = false;   // another fighter, or the match is over
++    g_rest_armed[p].store(st.jr_armed, std::memory_order_relaxed);
++    if (st.jr_armed) {   // the aura's world view: every slot's feet, hers and her facing
++      RestAuraWorld w{};
++      w.self_slot = -1; w.facing = facing;
++      for (int s = 0; s < 4; ++s) { w.live[s] = view.slot_live[s] != 0; w.x[s] = view.slot_x[s]; w.y[s] = view.slot_y[s]; }
++      for (int i = 0; i < 4; ++i)
++        if (&view.port[i] == fighter) w.self_slot = view.port_slot[i] >= 0 ? view.port_slot[i] : view.port[i].slot;
++      std::lock_guard<std::mutex> lock(g_aura_mu);
++      g_aura[p] = w;
++    }
++    const bool rest_held = st.jr_armed;
++    if (puff_rest) pad.button &= (uint16_t)~jump_bit(JigglyRest);   // Jigglypuff's button is the switch
 +    if (rest_held) {   // the same button as the up-tilt one: Jigglypuff's is the rest
 +      jiggly_rest(o, st, pad, fighter);
-+      pad.button &= (uint16_t)~jump_bit(JigglyRest);
++      st.ut_frame = -1; st.ut_was_down = true;
++    } else if (puff_rest) {
 +      st.ut_frame = -1; st.ut_was_down = true;
 +    } else if (enabled(UpTiltButton)) {   // first: a press it takes is no jump for the other mods
 +      const uint16_t bit = jump_bit(UpTiltButton);
@@ -5891,7 +6040,7 @@ index 0000000..cbae98c
 +    else { st.gj_motion = -1; st.gj_count = 0; st.gj_phase = 0; st.gj_want = false; }
 +    if (enabled(SamusExtendedGrapple)) samus_grapple(o, st, pad, fighter, kind); else st.sg_step = -1;
 +    if (enabled(DocUpBCancel)) doc_upb_cancel(o, st, fighter, kind, facing, delay); else st.du_t = -1;
-+    if (enabled(PuffPoundLoop)) puff_pound_loop(o, st, pad, fighter, kind); else st.pp_on = false;
++    if (enabled(PuffPoundLoop)) puff_pound_loop(o, st, pad, fighter, kind, delay); else st.pp_on = false;
 +    if (enabled(TornadoMash)) tornado_mash(o, st, pad, fighter, kind); else st.tm_t = 0;
 +    if (enabled(DkPunch9)) dk_punch9(o, st, pad, fighter, kind); else st.dk_last = -1.0f;
 +    if (enabled(MarioWallUpB)) mario_wall_upb(o, st, pad, fighter, kind, facing); else st.mw_on = false;
@@ -5989,10 +6138,10 @@ index 0000000..cbae98c
 +}  // namespace pad_mods
 diff --git a/port/runtime/host/pad_mods.h b/port/runtime/host/pad_mods.h
 new file mode 100644
-index 0000000..2eb3134
+index 0000000..367e7cf
 --- /dev/null
 +++ b/port/runtime/host/pad_mods.h
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,201 @@
 +// Vooby Mods: small, switchable rewrites of the local pad (F1 > Game > Vooby Mods).
 +//
 +// Each mod is a real input added to the pad inside the host's pad read, the same place Auto
@@ -6177,6 +6326,12 @@ index 0000000..2eb3134
 +void set_ai_choice(int kind, int choice);
 +// Whether an AI is playing for this controller now (D-pad down flips it; offline matches only).
 +bool ai_active(int port);
++// Jigglypuff's auto rest armed on controller `port` (the aura around her).
++bool rest_armed(int port);
++// For the aura: the world position of every player slot (feet; valid when live) and, for the armed
++// Jigglypuff on `port`, her slot and facing (+1 right). False when nothing is known.
++struct RestAuraWorld { bool live[4]; float x[4], y[4]; int self_slot; float facing; };
++bool rest_aura_world(int port, RestAuraWorld& out);
 +// D-pad left/right while an AI plays: the player's request to switch its target (-1 previous,
 +// +1 next, 0 none), taken once by the AI driver.
 +int take_ai_target_step(int port);
@@ -6330,10 +6485,10 @@ index 5d2e2bc..0de3ddf 100644
    CHECK(std::strcmp(ranked_start_log(true), "ranked: auto L-cancel off (enforced; saved setting on)") == 0);
 diff --git a/port/tests/pad_mods_test.cpp b/port/tests/pad_mods_test.cpp
 new file mode 100644
-index 0000000..aa3c034
+index 0000000..b7bbf93
 --- /dev/null
 +++ b/port/tests/pad_mods_test.cpp
-@@ -0,0 +1,1361 @@
+@@ -0,0 +1,1375 @@
 +// Training input mods as fixed frame sequences (so input delay cannot break them); they follow the
 +// local fighter; offline, Direct and Teams only.
 +// SPDX-License-Identifier: GPL-3.0-or-later
@@ -7659,23 +7814,37 @@ index 0000000..aa3c034
 +    const uint16_t rb = pad_mods::enabled(pad_mods::JumpWithY) ? kX : kY;
 +    fighter(3, kPuff, kWait, 0); view.port_slot[3] = 3; view.pos_x[3] = 0; view.pos_y[3] = 0; idle(30);
 +    view.slot_live[1] = 1; view.slot_x[1] = 40; view.slot_y[1] = 0; view.slot_team[1] = -1; view.slot_team[3] = -1;
-+    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); CHECK(!(p.button & (kB | kX | kY)) && p.stick_x == 0); }   // far: nothing, no jump
++    // a toggle (TSC 11-14): a tap arms it, the button never reaches the game
++    { host::PadState p = pad4({rb}); CHECK(!(p.button & (kB | kX | kY)) && p.stick_x == 0); }
++    CHECK(pad_mods::rest_armed(3));
++    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); CHECK(!(p.button & (kB | kX | kY))); }   // still held: still armed, far: nothing
++    CHECK(pad_mods::rest_armed(3));
++    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({}); CHECK(!(p.button & kB) && p.stick_x == 0); }
 +    view.slot_x[1] = 6;   // pushed against them, out of reach: close in (a frame at rest, then all the way)
-+    { host::PadState p = pad4({rb}); CHECK(!(p.button & kB) && p.stick_x == 0); }
-+    { host::PadState p = pad4({rb}); CHECK(!(p.button & kB) && p.stick_x == 80); }
++    { host::PadState p = pad4({}); CHECK(!(p.button & kB) && p.stick_x == 0); }
++    { host::PadState p = pad4({}); CHECK(!(p.button & kB) && p.stick_x == 80); }
 +    view.slot_x[1] = 2;
 +    int bs = 0;
-+    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({rb}); if (p.button & kB) { ++bs; CHECK(p.stick_y == -80 && p.stick_x == 0); } }
++    for (int f = 0; f < 4; ++f) { host::PadState p = pad4({}); if (p.button & kB) { ++bs; CHECK(p.stick_y == -80 && p.stick_x == 0); } }
 +    CHECK(bs == 2);
-+    { host::PadState p = pad4({}); CHECK(!(p.button & kB)); }   // let go: nothing
++    // can't be hit (ledge, roll, respawn invincibility): no Rest until they can be (TSC 11-14)
++    view.slot_unhittable[1] = 1;
++    for (int f = 0; f < 4; ++f) CHECK(!(pad4({}).button & kB));
++    view.slot_unhittable[1] = 0;
++    { int b2 = 0; for (int f = 0; f < 4; ++f) if (pad4({}).button & kB) ++b2; CHECK(b2 == 2); }
 +    // same team (Teams): not an opponent
 +    view.slot_team[1] = 0; view.slot_team[3] = 0;
-+    for (int f = 0; f < 4; ++f) CHECK(!(pad4({rb}).button & kB));
++    for (int f = 0; f < 4; ++f) CHECK(!(pad4({}).button & kB));
 +    view.slot_team[1] = view.slot_team[3] = -1;
 +    // our own slot named wrong (TSC 11-13, online Teams): she is never her own opponent
 +    view.slot_x[1] = 40; view.slot_live[3] = 1; view.slot_x[3] = 0; view.slot_y[3] = 0; view.port_slot[3] = 1;
-+    for (int f = 0; f < 4; ++f) CHECK(!(pad4({rb}).button & kB));
++    for (int f = 0; f < 4; ++f) CHECK(!(pad4({}).button & kB));
 +    view.slot_live[3] = 0; view.port_slot[3] = 3;
++    // a second tap: off, nothing even in range
++    view.slot_x[1] = 2;
++    { host::PadState p = pad4({rb}); CHECK(!(p.button & (kX | kY))); }
++    CHECK(!pad_mods::rest_armed(3));
++    for (int f = 0; f < 4; ++f) CHECK(!(pad4({}).button & kB));
 +    // not Jigglypuff: the button is untouched
 +    fighter(3, kFox, kWait, 0); idle(30);
 +    CHECK(pad4({rb}).button & rb);
